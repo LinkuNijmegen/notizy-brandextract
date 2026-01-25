@@ -121,21 +121,21 @@
       "alignment": "both",
       "font_size": 11.0,
       "text_color": "#2E3440",
-      "font_family": "WorkSans",
-      "font_weight": "Light",
-      "line_spacing": 1.45,
+      "font_family": "Calibri",
+      "font_weight": "Regular",
+      "line_spacing": 1.15,
       "paragraph_spacing": {
-        "after": 6.0,
+        "after": 8.16,
         "before": 0
       }
     },
     "lists": {
       "font_size": 11.0,
       "indent_mm": 8,
-      "font_family": "WorkSans",
-      "font_weight": "Light",
+      "font_family": "Calibri",
+      "font_weight": "Regular",
       "bullet_color": "#2E3440",
-      "line_spacing": 1.45,
+      "line_spacing": 1.15,
       "spacing_between_items": 2,
       "bullet_indent_adjust_mm": 2
     },
@@ -143,8 +143,8 @@
       "font_size": 11.0,
       "padding_mm": 4,
       "text_color": "#2E3440",
-      "font_family": "WorkSans",
-      "font_weight": "Light",
+      "font_family": "Calibri",
+      "font_weight": "Regular",
       "border_color": "#CCCCCC",
       "line_spacing": 1.15,
       "background_color": "#F5F5F5"
@@ -152,8 +152,8 @@
     "table": {
       "font_size": 11.0,
       "text_color": "#2E3440",
-      "font_family": "WorkSans",
-      "font_weight": "Light",
+      "font_family": "Calibri",
+      "font_weight": "Regular",
       "border_color": "#CCCCCC",
       "border_width": 0.5,
       "line_spacing": 1.15,
@@ -246,17 +246,11 @@
   },
   "contact_info": {
     "show": false,
-    "fields": [
-      "Kanaalstraat 200",
-      "6541 XN Nijmegen",
-      "Tel +31(0)88 024 93 33",
-      "info@klokgroep.nl",
-      "www.klokgroep.nl"
-    ],
+    "fields": [],
     "position": "top_right",
     "alignment": "right",
-    "font_size": 8,
-    "text_color": "#000000",
+    "font_size": 11.0,
+    "text_color": "#2E3440",
     "font_family": "Calibri",
     "line_spacing": 1.2
   },

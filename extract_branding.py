@@ -423,6 +423,116 @@ def average(values):
     return round(sum(values) / len(values), 2)
 
 
+def dedupe_preserve_order(items):
+    seen = set()
+    result = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def extract_contact_lines(text):
+    if not text:
+        return []
+    email_re = re.compile(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}', re.IGNORECASE)
+    url_re = re.compile(r'(https?://\\S+|www\\.[^\\s]+)', re.IGNORECASE)
+    phone_re = re.compile(r'(tel\\.?\\s*)?(\\+?\\d[\\d\\s().-]{6,}\\d)', re.IGNORECASE)
+    postcode_re = re.compile(r'\\b\\d{4}\\s?[A-Z]{2}\\b', re.IGNORECASE)
+    address_hint_re = re.compile(r'\\b(straat|laan|weg|plein|gracht|dreef|singel|kade|steeg|straat)\\b', re.IGNORECASE)
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if email_re.search(line) or url_re.search(line) or phone_re.search(line) or postcode_re.search(line):
+            lines.append(line)
+            continue
+        if address_hint_re.search(line) and any(ch.isdigit() for ch in line):
+            lines.append(line)
+    return lines
+
+
+def extract_contact_info_from_extracted(extracted):
+    sources = []
+    header = extracted.get('page_header') or {}
+    footer = extracted.get('page_footer') or {}
+    if header.get('text'):
+        sources.append(('header', header.get('text'), header))
+    if footer.get('text'):
+        sources.append(('footer', footer.get('text'), footer))
+    fields = []
+    format_info = {}
+    for source, text, fmt in sources:
+        lines = extract_contact_lines(text)
+        if lines:
+            fields.extend(lines)
+            if not format_info:
+                format_info = dict(fmt)
+    fields = dedupe_preserve_order(fields)
+    return {
+        'fields': fields,
+        'format': format_info,
+    }
+
+
+def split_font_family_weight(font_name):
+    if not font_name:
+        return None, None
+    raw = font_name.strip()
+    if not raw:
+        return None, None
+    weight_tokens = {
+        'thin': 'Thin',
+        'extralight': 'ExtraLight',
+        'ultralight': 'ExtraLight',
+        'light': 'Light',
+        'book': 'Book',
+        'regular': 'Regular',
+        'normal': 'Regular',
+        'medium': 'Medium',
+        'semibold': 'SemiBold',
+        'demibold': 'DemiBold',
+        'bold': 'Bold',
+        'extrabold': 'ExtraBold',
+        'ultrabold': 'ExtraBold',
+        'black': 'Black',
+        'heavy': 'Black',
+    }
+    normalized = raw.replace('_', ' ')
+    parts = re.split(r'[-\\s]+', normalized.strip())
+    if not parts:
+        return raw, None
+    for token_count in (2, 1):
+        if len(parts) >= token_count:
+            candidate = ''.join(parts[-token_count:]).lower()
+            if candidate in weight_tokens:
+                family = ' '.join(parts[:-token_count]).strip()
+                family = family if family else raw
+                return family, weight_tokens[candidate]
+    return raw, None
+
+
+def guess_from_fonts_used(fonts_used):
+    if not isinstance(fonts_used, dict) or not fonts_used:
+        return None, None
+    best_font = None
+    best_count = -1
+    for font, sizes in fonts_used.items():
+        size_count = len([s for s in sizes if s is not None])
+        if size_count > best_count:
+            best_count = size_count
+            best_font = font
+    if not best_font:
+        return None, None
+    sizes = [s for s in fonts_used.get(best_font, []) if s is not None]
+    if not sizes:
+        return best_font, None
+    return best_font, min(sizes)
+
+
 def normalize_pdf_color(value):
     if value is None:
         return None
@@ -1109,10 +1219,20 @@ def build_extracted_from_docx(path, results_dir=None):
         extracted['layout'] = extract_layout(doc_root)
 
         body_style = extract_body_style(styles)
+        body_from_paras = derive_body_from_paragraphs(
+            doc_root,
+            styles,
+            defaults,
+            theme_fonts=theme_fonts,
+            theme_colors=theme_colors,
+        )
+        if not any(value is not None for value in body_from_paras.values()):
+            body_from_paras = {}
+        body = dict(body_from_paras)
         if body_style:
             body_rpr = body_style.get('rpr', {})
             body_ppr = body_style.get('ppr', {})
-            extracted['body'] = {
+            style_body = {
                 'font_family': body_rpr.get('font_family'),
                 'font_size': body_rpr.get('font_size'),
                 'text_color': body_rpr.get('color'),
@@ -1121,37 +1241,27 @@ def build_extracted_from_docx(path, results_dir=None):
                 'spacing_after': body_ppr.get('spacing_after'),
                 'alignment': body_ppr.get('alignment'),
             }
-        body_fallback = derive_body_from_paragraphs(
-            doc_root,
-            styles,
-            defaults,
-            theme_fonts=theme_fonts,
-            theme_colors=theme_colors,
-        )
-        if 'body' not in extracted:
-            extracted['body'] = body_fallback
-        else:
-            for key, value in body_fallback.items():
-                if extracted['body'].get(key) is None:
-                    extracted['body'][key] = value
+            for key, value in style_body.items():
+                if body.get(key) is None:
+                    body[key] = value
         if defaults:
-            extracted.setdefault('body', {})
             defaults_rpr = defaults.get('rpr') or {}
             defaults_ppr = defaults.get('ppr') or {}
-            if extracted['body'].get('font_family') is None:
-                extracted['body']['font_family'] = defaults_rpr.get('font_family')
-            if extracted['body'].get('font_size') is None:
-                extracted['body']['font_size'] = defaults_rpr.get('font_size')
-            if extracted['body'].get('text_color') is None:
-                extracted['body']['text_color'] = defaults_rpr.get('color')
-            if extracted['body'].get('line_spacing') is None:
-                extracted['body']['line_spacing'] = defaults_ppr.get('line_spacing')
-            if extracted['body'].get('spacing_before') is None:
-                extracted['body']['spacing_before'] = defaults_ppr.get('spacing_before')
-            if extracted['body'].get('spacing_after') is None:
-                extracted['body']['spacing_after'] = defaults_ppr.get('spacing_after')
-            if extracted['body'].get('alignment') is None:
-                extracted['body']['alignment'] = defaults_ppr.get('alignment')
+            if body.get('font_family') is None:
+                body['font_family'] = defaults_rpr.get('font_family')
+            if body.get('font_size') is None:
+                body['font_size'] = defaults_rpr.get('font_size')
+            if body.get('text_color') is None:
+                body['text_color'] = defaults_rpr.get('color')
+            if body.get('line_spacing') is None:
+                body['line_spacing'] = defaults_ppr.get('line_spacing')
+            if body.get('spacing_before') is None:
+                body['spacing_before'] = defaults_ppr.get('spacing_before')
+            if body.get('spacing_after') is None:
+                body['spacing_after'] = defaults_ppr.get('spacing_after')
+            if body.get('alignment') is None:
+                body['alignment'] = defaults_ppr.get('alignment')
+        extracted['body'] = body
 
         headings = extract_heading_styles(styles)
         heading_info = {
@@ -1190,6 +1300,7 @@ def build_extracted_from_docx(path, results_dir=None):
         )
         extracted['page_header'] = derive_header_footer_format(header_info)
         extracted['page_footer'] = derive_header_footer_format(footer_info)
+        extracted['contact_info'] = extract_contact_info_from_extracted(extracted)
 
         header_targets, footer_targets = get_header_footer_targets(doc_root, zipf)
         document_targets = ['document.xml']
@@ -1371,6 +1482,7 @@ def build_extracted_from_pdf(path):
         'font_size': footer_size_counts.most_common(1)[0][0] if footer_size_counts else None,
         'text_color': footer_color_counts.most_common(1)[0][0] if footer_color_counts else None,
     }
+    extracted['contact_info'] = extract_contact_info_from_extracted(extracted)
     return extracted
 
 
@@ -1385,12 +1497,33 @@ def build_profile(extracted):
     if layout.get('margins_mm'):
         profile['layout']['margins_mm'] = layout['margins_mm']
 
-    body = extracted.get('body') or {}
+    body = dict(extracted.get('body') or {})
+    colors_used = extracted.get('colors_used') or set()
+    fallback_font, fallback_size = guess_from_fonts_used(extracted.get('fonts_used') or {})
+    if body.get('font_family') is None and fallback_font:
+        body['font_family'] = fallback_font
+    if body.get('font_size') is None and fallback_size:
+        body['font_size'] = fallback_size
+    if body.get('text_color') is None and colors_used:
+        body['text_color'] = sorted(colors_used)[0]
+
+    font_family, font_weight = split_font_family_weight(body.get('font_family'))
+    if font_family:
+        body['font_family'] = font_family
+    if body.get('font_weight') is None and font_weight:
+        body['font_weight'] = font_weight
+    if body.get('font_weight') is None and body.get('font_family'):
+        body['font_weight'] = 'Regular'
     if body.get('font_family'):
         profile['typography']['body']['font_family'] = body['font_family']
         profile['typography']['lists']['font_family'] = body['font_family']
         profile['typography']['quote']['font_family'] = body['font_family']
         profile['typography']['table']['font_family'] = body['font_family']
+    if body.get('font_weight'):
+        profile['typography']['body']['font_weight'] = body['font_weight']
+        profile['typography']['lists']['font_weight'] = body['font_weight']
+        profile['typography']['quote']['font_weight'] = body['font_weight']
+        profile['typography']['table']['font_weight'] = body['font_weight']
     if body.get('font_size'):
         profile['typography']['body']['font_size'] = body['font_size']
         profile['typography']['lists']['font_size'] = body['font_size']
@@ -1404,6 +1537,8 @@ def build_profile(extracted):
     if body.get('line_spacing'):
         profile['typography']['body']['line_spacing'] = body['line_spacing']
         profile['typography']['lists']['line_spacing'] = body['line_spacing']
+        profile['typography']['quote']['line_spacing'] = body['line_spacing']
+        profile['typography']['table']['line_spacing'] = body['line_spacing']
     if body.get('spacing_before') is not None:
         profile['typography']['body']['paragraph_spacing']['before'] = body['spacing_before']
     if body.get('spacing_after') is not None:
@@ -1420,6 +1555,8 @@ def build_profile(extracted):
         profile['typography']['headings']['font_family'] = body['font_family']
     if headings.get('font_weight'):
         profile['typography']['headings']['font_weight'] = headings['font_weight']
+    elif body.get('font_weight'):
+        profile['typography']['headings']['font_weight'] = body['font_weight']
     if headings.get('color'):
         profile['typography']['headings']['color'] = headings['color']
     elif body.get('text_color'):
@@ -1455,13 +1592,32 @@ def build_profile(extracted):
     if footer.get('text_color'):
         profile['page_footer']['text_color'] = footer['text_color']
 
+    contact = extracted.get('contact_info') or {}
+    contact_fields = contact.get('fields') or []
+    profile['contact_info']['fields'] = contact_fields
+    profile['contact_info']['show'] = bool(contact_fields)
+    contact_format = contact.get('format') or {}
+    if contact_format.get('alignment'):
+        profile['contact_info']['alignment'] = contact_format['alignment']
+    if contact_format.get('font_family'):
+        profile['contact_info']['font_family'] = contact_format['font_family']
+    elif body.get('font_family'):
+        profile['contact_info']['font_family'] = body['font_family']
+    if contact_format.get('font_size'):
+        profile['contact_info']['font_size'] = contact_format['font_size']
+    elif body.get('font_size'):
+        profile['contact_info']['font_size'] = body['font_size']
+    if contact_format.get('text_color'):
+        profile['contact_info']['text_color'] = contact_format['text_color']
+    elif body.get('text_color'):
+        profile['contact_info']['text_color'] = body['text_color']
+
     fonts_used = extracted.get('fonts_used') or {}
     if isinstance(fonts_used, dict):
         profile['extras']['fonts_used'] = [
             {'name': font, 'sizes': sorted(size for size in sizes if size is not None)}
             for font, sizes in sorted(fonts_used.items())
         ]
-    colors_used = extracted.get('colors_used') or set()
     if colors_used:
         profile['extras']['colors_used'] = sorted(colors_used)
     assets = extracted.get('assets') or []
