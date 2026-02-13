@@ -24,6 +24,26 @@ python extract_branding.py path/to/file.pdf --format json
 python extract_branding.py path/to/file.docx --format xlsx
 ```
 
+### Template (base profile)
+
+By default the script uses `results/finc.json` as the base template if it exists. Any sections not present in the template are not filled.
+
+You can override this with `--template`:
+
+```bash
+python extract_branding.py path/to/file.docx --format json --template path/to/template.json
+```
+
+### Optional DOCX template asset
+
+Attach a DOCX template file as an asset and reference it in the output:
+
+```bash
+python extract_branding.py path/to/file.docx --format json --template-docx path/to/template.docx
+```
+
+This adds `template_file: { "asset_slug": "template-file" }` and stores the DOCX in `results/assets` with slug `template-file`.
+
 ### Output location
 
 All outputs are saved to `./results`.
@@ -41,8 +61,8 @@ This produces `results/klantA.json`.
 
 For DOCX inputs, embedded images (including header/footer logos) are saved to `results/assets`. The JSON output includes:
 
-- `extras.assets`: list of extracted assets with original DOCX paths and sources.
-- `extras.logo_files`: logo candidates (images found in headers).
+- `extras.assets`: list of extracted assets with slugs, filenames, and sources (no local paths).
+- `page_header.logo.asset_slug`: slug of the header logo when detected.
 
 ## Notes
 

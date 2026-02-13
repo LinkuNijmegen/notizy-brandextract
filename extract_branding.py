@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+import shutil
 import zipfile
 from collections import Counter, defaultdict
 from copy import deepcopy
@@ -13,7 +14,18 @@ NS = {
     'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
     'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
     'v': 'urn:schemas-microsoft-com:vml',
+    'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
 }
+
+EXCLUDED_SECTIONS = {
+    'category_tags',
+    'action_table',
+    'document_info',
+    'section_headers',
+    'next_meeting_table',
+}
+
+TEMPLATE_ASSET_SLUG = 'template-file'
 
 DEFAULT_PROFILE = {
     'extras': {
@@ -276,6 +288,16 @@ def points_to_mm(value):
     if value is None:
         return None
     return value * 25.4 / 72.0
+
+
+def emu_to_mm(value):
+    if value is None:
+        return None
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return None
+    return value * 25.4 / 914400.0
 
 
 def hex_to_rgb(value):
@@ -630,12 +652,23 @@ def parse_rpr(rpr, theme_fonts=None, theme_colors=None):
     return info
 
 
+def bool_from_val(value):
+    if value is None:
+        return True
+    return str(value).lower() not in ('0', 'false', 'off', 'none')
+
+
 def parse_ppr(ppr, font_size_pt=None):
     info = {
         'alignment': None,
         'spacing_before': None,
         'spacing_after': None,
         'line_spacing': None,
+        'indent_left_mm': None,
+        'indent_right_mm': None,
+        'indent_first_line_mm': None,
+        'indent_hanging_mm': None,
+        'tabs': None,
     }
     if ppr is None:
         return info
@@ -652,6 +685,24 @@ def parse_ppr(ppr, font_size_pt=None):
                 info['line_spacing'] = round(line / 240.0, 2)
             elif line_rule == 'exact' and font_size_pt:
                 info['line_spacing'] = round((line / 20.0) / font_size_pt, 2)
+    ind = ppr.find('w:ind', NS)
+    if ind is not None:
+        info['indent_left_mm'] = twips_to_mm(safe_int(get_attr(ind, 'left')))
+        info['indent_right_mm'] = twips_to_mm(safe_int(get_attr(ind, 'right')))
+        info['indent_first_line_mm'] = twips_to_mm(safe_int(get_attr(ind, 'firstLine')))
+        info['indent_hanging_mm'] = twips_to_mm(safe_int(get_attr(ind, 'hanging')))
+    tabs_el = ppr.find('w:tabs', NS)
+    if tabs_el is not None:
+        tabs = []
+        for tab in tabs_el.findall('w:tab', NS):
+            pos = twips_to_mm(safe_int(get_attr(tab, 'pos')))
+            if pos is None:
+                continue
+            tabs.append({
+                'position_mm': round(pos, 2),
+                'alignment': get_attr(tab, 'val'),
+            })
+        info['tabs'] = tabs
     return info
 
 
@@ -1026,6 +1077,25 @@ def unique_filename(name, used_names):
     return candidate
 
 
+def slugify(value):
+    if not value:
+        return 'asset'
+    value = value.strip().lower()
+    value = re.sub(r'[^a-z0-9]+', '-', value)
+    value = value.strip('-')
+    return value or 'asset'
+
+
+def unique_slug(slug, used_slugs):
+    candidate = slug
+    counter = 1
+    while candidate in used_slugs:
+        candidate = '%s-%d' % (slug, counter)
+        counter += 1
+    used_slugs.add(candidate)
+    return candidate
+
+
 def find_docx_images_in_part(zipf, part_path):
     root = read_docx_xml(zipf, part_path)
     if root is None:
@@ -1034,10 +1104,38 @@ def find_docx_images_in_part(zipf, part_path):
     if not rels:
         return []
     r_ids = set()
-    for blip in root.findall('.//a:blip', NS):
+    sizes_by_rid = defaultdict(list)
+    positions_by_rid = defaultdict(list)
+    for drawing in root.findall('.//w:drawing', NS):
+        blip = drawing.find('.//a:blip', NS)
+        if blip is None:
+            continue
         r_id = blip.get(qr('embed')) or blip.get(qr('link'))
-        if r_id:
-            r_ids.add(r_id)
+        if not r_id:
+            continue
+        r_ids.add(r_id)
+        extent = drawing.find('.//wp:extent', NS)
+        if extent is not None:
+            width_mm = emu_to_mm(extent.get('cx'))
+            height_mm = emu_to_mm(extent.get('cy'))
+            if width_mm and height_mm:
+                sizes_by_rid[r_id].append((round(width_mm, 2), round(height_mm, 2)))
+        anchor = drawing.find('.//wp:anchor', NS)
+        if anchor is not None:
+            pos_h = anchor.find('wp:positionH', NS)
+            pos_v = anchor.find('wp:positionV', NS)
+            rel_h = get_attr(pos_h, 'relativeFrom') if pos_h is not None else None
+            rel_v = get_attr(pos_v, 'relativeFrom') if pos_v is not None else None
+            off_h = pos_h.find('wp:posOffset', NS) if pos_h is not None else None
+            off_v = pos_v.find('wp:posOffset', NS) if pos_v is not None else None
+            offset_x = emu_to_mm(off_h.text) if off_h is not None else None
+            offset_y = emu_to_mm(off_v.text) if off_v is not None else None
+            positions_by_rid[r_id].append({
+                'relative_from_h': rel_h,
+                'relative_from_v': rel_v,
+                'offset_x_mm': round(offset_x, 2) if offset_x is not None else None,
+                'offset_y_mm': round(offset_y, 2) if offset_y is not None else None,
+            })
     for img in root.findall('.//v:imagedata', NS):
         r_id = img.get(qr('id'))
         if r_id:
@@ -1047,7 +1145,7 @@ def find_docx_images_in_part(zipf, part_path):
         target = rels.get(r_id)
         norm = normalize_rel_target(target)
         if norm:
-            targets.append(norm)
+            targets.append((norm, sizes_by_rid.get(r_id, []), positions_by_rid.get(r_id, [])))
     return targets
 
 
@@ -1061,7 +1159,17 @@ def save_zip_member(zipf, member_path, dest_dir, used_names):
     dest_path = dest_dir / filename
     with open(dest_path, 'wb') as handle:
         handle.write(data)
-    return dest_path
+    return filename
+
+
+def copy_asset_file(source_path, dest_dir, used_names):
+    source = Path(source_path)
+    if not source.exists():
+        return None
+    filename = unique_filename(safe_filename(source.name), used_names)
+    dest_path = dest_dir / filename
+    shutil.copyfile(source, dest_path)
+    return filename
 
 
 def derive_header_footer_format(info):
@@ -1108,6 +1216,18 @@ def paragraph_style_id(paragraph):
     return get_attr(pstyle, 'val')
 
 
+def paragraph_num_pr(paragraph):
+    ppr = paragraph.find('w:pPr', NS)
+    if ppr is None:
+        return None, None
+    num_pr = ppr.find('w:numPr', NS)
+    if num_pr is None:
+        return None, None
+    num_id = get_attr(num_pr.find('w:numId', NS), 'val')
+    ilvl = get_attr(num_pr.find('w:ilvl', NS), 'val')
+    return num_id, ilvl
+
+
 def is_heading_paragraph(paragraph, styles):
     ppr = paragraph.find('w:pPr', NS)
     if ppr is not None:
@@ -1126,6 +1246,26 @@ def is_heading_paragraph(paragraph, styles):
         if match_heading_level(name) or match_heading_level(style_id):
             return True
     return False
+
+
+def paragraph_heading_level(paragraph, styles):
+    ppr = paragraph.find('w:pPr', NS)
+    if ppr is not None:
+        outline_el = ppr.find('w:outlineLvl', NS)
+        if outline_el is not None:
+            outline_val = safe_int(get_attr(outline_el, 'val'))
+            if outline_val is not None:
+                return outline_val + 1
+    style_id = paragraph_style_id(paragraph)
+    if style_id and style_id in styles:
+        style = styles[style_id]
+        outline_level = style.get('outline_level')
+        if outline_level is not None:
+            return outline_level + 1
+        level = match_heading_level(style.get('name')) or match_heading_level(style_id)
+        if level:
+            return level
+    return None
 
 
 def derive_body_from_paragraphs(doc_root, styles, defaults, theme_fonts=None, theme_colors=None):
@@ -1194,6 +1334,428 @@ def derive_body_from_paragraphs(doc_root, styles, defaults, theme_fonts=None, th
     return body
 
 
+def derive_heading_from_paragraphs(doc_root, styles, defaults, theme_fonts=None, theme_colors=None):
+    if doc_root is None:
+        return {}
+    size_counts = defaultdict(Counter)
+    color_counts_by_level = defaultdict(Counter)
+    line_spacings = defaultdict(list)
+    font_counts = Counter()
+    color_counts = Counter()
+    bold_counts = Counter()
+
+    defaults_rpr = (defaults or {}).get('rpr') or {}
+    defaults_ppr = (defaults or {}).get('ppr') or {}
+
+    for paragraph in doc_root.findall('.//w:p', NS):
+        level = paragraph_heading_level(paragraph, styles)
+        if not level or level > 4:
+            continue
+        style_id = paragraph_style_id(paragraph)
+        style = styles.get(style_id) if style_id else None
+        style_rpr = style.get('rpr') if style else {}
+        style_ppr = style.get('ppr') if style else {}
+
+        ppr = paragraph.find('w:pPr', NS)
+        ppr_info = parse_ppr(ppr, style_rpr.get('font_size'))
+        ppr_eff = merge_ppr(defaults_ppr, merge_ppr(style_ppr, ppr_info))
+        if ppr_eff.get('line_spacing') is not None:
+            line_spacings[level].append(ppr_eff['line_spacing'])
+
+        runs = paragraph.findall('.//w:r', NS)
+        if not runs:
+            rpr_eff = merge_rpr(defaults_rpr, style_rpr)
+            if rpr_eff.get('font_size'):
+                size_counts[level][round(rpr_eff['font_size'], 2)] += 1
+            if rpr_eff.get('font_family'):
+                font_counts[rpr_eff['font_family']] += 1
+            if rpr_eff.get('color'):
+                color_counts[rpr_eff['color']] += 1
+                color_counts_by_level[level][rpr_eff['color']] += 1
+            if rpr_eff.get('bold') is not None:
+                bold_counts[rpr_eff['bold']] += 1
+            continue
+        for run in runs:
+            run_rpr = parse_rpr(run.find('w:rPr', NS), theme_fonts=theme_fonts, theme_colors=theme_colors)
+            rpr_eff = merge_rpr(defaults_rpr, merge_rpr(style_rpr, run_rpr))
+            if rpr_eff.get('font_size'):
+                size_counts[level][round(rpr_eff['font_size'], 2)] += 1
+            if rpr_eff.get('font_family'):
+                font_counts[rpr_eff['font_family']] += 1
+            if rpr_eff.get('color'):
+                color_counts[rpr_eff['color']] += 1
+                color_counts_by_level[level][rpr_eff['color']] += 1
+            if rpr_eff.get('bold') is not None:
+                bold_counts[rpr_eff['bold']] += 1
+
+    sizes = {}
+    for level, counts in size_counts.items():
+        if counts:
+            sizes['h%d' % level] = counts.most_common(1)[0][0]
+    colors = {}
+    for level, counts in color_counts_by_level.items():
+        if counts:
+            colors['h%d' % level] = counts.most_common(1)[0][0]
+    line_spacing = {}
+    for level, values in line_spacings.items():
+        avg = average(values)
+        if avg is not None:
+            line_spacing['h%d' % level] = avg
+
+    bold_weight = None
+    if bold_counts:
+        bold_weight = 'Bold' if bold_counts.get(True, 0) >= bold_counts.get(False, 0) else None
+
+    return {
+        'sizes': sizes,
+        'colors': colors,
+        'line_spacing': line_spacing,
+        'font_family': font_counts.most_common(1)[0][0] if font_counts else None,
+        'color': color_counts.most_common(1)[0][0] if color_counts else None,
+        'font_weight': bold_weight,
+    }
+
+
+def summarize_paragraph_formatting(doc_root, styles, defaults):
+    if doc_root is None:
+        return {}
+    defaults_ppr = (defaults or {}).get('ppr') or {}
+    indent_left = []
+    indent_right = []
+    indent_first = []
+    indent_hanging = []
+    tab_counts = Counter()
+    for paragraph in doc_root.findall('.//w:p', NS):
+        if is_heading_paragraph(paragraph, styles):
+            continue
+        style_id = paragraph_style_id(paragraph)
+        style = styles.get(style_id) if style_id else None
+        style_ppr = style.get('ppr') if style else {}
+        ppr = paragraph.find('w:pPr', NS)
+        ppr_info = parse_ppr(ppr)
+        ppr_eff = merge_ppr(defaults_ppr, merge_ppr(style_ppr, ppr_info))
+        if ppr_eff.get('indent_left_mm') is not None:
+            indent_left.append(ppr_eff['indent_left_mm'])
+        if ppr_eff.get('indent_right_mm') is not None:
+            indent_right.append(ppr_eff['indent_right_mm'])
+        if ppr_eff.get('indent_first_line_mm') is not None:
+            indent_first.append(ppr_eff['indent_first_line_mm'])
+        if ppr_eff.get('indent_hanging_mm') is not None:
+            indent_hanging.append(ppr_eff['indent_hanging_mm'])
+        tabs = ppr_eff.get('tabs') or []
+        for tab in tabs:
+            tab_counts[(tab.get('position_mm'), tab.get('alignment'))] += 1
+
+    tab_stops = []
+    for (pos, alignment), _count in tab_counts.most_common(8):
+        if pos is None:
+            continue
+        tab_stops.append({'position_mm': pos, 'alignment': alignment})
+    tab_stops = sorted(tab_stops, key=lambda item: item['position_mm'])
+
+    return {
+        'paragraph_indents': {
+            'left_mm': average(indent_left),
+            'right_mm': average(indent_right),
+            'first_line_mm': average(indent_first),
+            'hanging_mm': average(indent_hanging),
+        },
+        'tab_stops': tab_stops,
+    }
+
+
+def parse_numbering(numbering_root, theme_fonts=None, theme_colors=None):
+    if numbering_root is None:
+        return {}, {}
+    abstract_nums = {}
+    nums = {}
+    for abstract in numbering_root.findall('w:abstractNum', NS):
+        abs_id = get_attr(abstract, 'abstractNumId')
+        levels = {}
+        for lvl in abstract.findall('w:lvl', NS):
+            ilvl = get_attr(lvl, 'ilvl')
+            num_fmt = get_attr(lvl.find('w:numFmt', NS), 'val')
+            lvl_text = get_attr(lvl.find('w:lvlText', NS), 'val')
+            lvl_jc = get_attr(lvl.find('w:lvlJc', NS), 'val')
+            rpr = parse_rpr(lvl.find('w:rPr', NS), theme_fonts=theme_fonts, theme_colors=theme_colors)
+            ppr = parse_ppr(lvl.find('w:pPr', NS), rpr.get('font_size'))
+            levels[str(ilvl)] = {
+                'num_format': num_fmt,
+                'level_text': lvl_text,
+                'alignment': lvl_jc,
+                'indent_left_mm': ppr.get('indent_left_mm'),
+                'indent_hanging_mm': ppr.get('indent_hanging_mm'),
+                'indent_first_line_mm': ppr.get('indent_first_line_mm'),
+                'font_family': rpr.get('font_family'),
+            }
+        if abs_id is not None:
+            abstract_nums[str(abs_id)] = levels
+    for num in numbering_root.findall('w:num', NS):
+        num_id = get_attr(num, 'numId')
+        abstract_id = get_attr(num.find('w:abstractNumId', NS), 'val')
+        if num_id is not None:
+            nums[str(num_id)] = str(abstract_id) if abstract_id is not None else None
+    return abstract_nums, nums
+
+
+def extract_list_styles(doc_root, numbering_root, theme_fonts=None, theme_colors=None):
+    if doc_root is None or numbering_root is None:
+        return []
+    abstract_nums, nums = parse_numbering(numbering_root, theme_fonts=theme_fonts, theme_colors=theme_colors)
+    used = Counter()
+    for paragraph in doc_root.findall('.//w:p', NS):
+        num_id, ilvl = paragraph_num_pr(paragraph)
+        if num_id is None or ilvl is None:
+            continue
+        used[(str(num_id), str(ilvl))] += 1
+    styles = []
+    for (num_id, ilvl), count in used.most_common():
+        abstract_id = nums.get(str(num_id))
+        levels = abstract_nums.get(str(abstract_id), {})
+        level_info = levels.get(str(ilvl))
+        if not level_info:
+            continue
+        num_fmt = level_info.get('num_format')
+        level_text = level_info.get('level_text')
+        bullet_char = None
+        if num_fmt == 'bullet' and level_text:
+            bullet_char = level_text.replace('%1', '').strip() or level_text[:1]
+        styles.append({
+            'level': int(ilvl) + 1,
+            'num_format': num_fmt,
+            'bullet_char': bullet_char,
+            'alignment': level_info.get('alignment'),
+            'indent_left_mm': level_info.get('indent_left_mm'),
+            'indent_hanging_mm': level_info.get('indent_hanging_mm'),
+            'indent_first_line_mm': level_info.get('indent_first_line_mm'),
+            'font_family': level_info.get('font_family'),
+            'usage_count': count,
+        })
+    return styles
+
+
+def extract_table_style(styles_root):
+    if styles_root is None:
+        return None
+    candidate = None
+    for style in styles_root.findall('w:style', NS):
+        if get_attr(style, 'type') != 'table':
+            continue
+        name = (get_attr(style.find('w:name', NS), 'val') or '').lower()
+        style_id = (get_attr(style, 'styleId') or '').lower()
+        if name in ('table grid', 'tablegrid') or style_id in ('tablegrid', 'table grid'):
+            candidate = style
+            break
+        if candidate is None:
+            candidate = style
+    if candidate is None:
+        return None
+    tbl_pr = candidate.find('w:tblPr', NS)
+    border_color = None
+    border_width_pt = None
+    if tbl_pr is not None:
+        borders = tbl_pr.find('w:tblBorders', NS)
+        if borders is not None:
+            for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                border = borders.find('w:%s' % side, NS)
+                if border is None:
+                    continue
+                if border_color is None:
+                    border_color = normalize_docx_color(get_attr(border, 'color'))
+                if border_width_pt is None:
+                    size_val = safe_int(get_attr(border, 'sz'))
+                    if size_val is not None:
+                        border_width_pt = round(size_val / 8.0, 2)
+    cell_padding_mm = None
+    if tbl_pr is not None:
+        cell_mar = tbl_pr.find('w:tblCellMar', NS)
+        if cell_mar is not None:
+            values = []
+            for side in ('top', 'left', 'bottom', 'right'):
+                side_el = cell_mar.find('w:%s' % side, NS)
+                if side_el is None:
+                    continue
+                val = safe_int(get_attr(side_el, 'w')) or safe_int(get_attr(side_el, 'val'))
+                if val is not None:
+                    values.append(twips_to_mm(val))
+            cell_padding_mm = average(values)
+    header_bg = None
+    header_pr = candidate.find('w:tblStylePr[@type=\"firstRow\"]/w:tblPr/w:shd', NS)
+    if header_pr is not None:
+        header_bg = normalize_docx_color(get_attr(header_pr, 'fill'))
+    return {
+        'style_name': get_attr(candidate.find('w:name', NS), 'val'),
+        'border_color': border_color,
+        'border_width_pt': border_width_pt,
+        'cell_padding_mm': cell_padding_mm,
+        'header_background_color': header_bg,
+    }
+
+
+def extract_section_settings(doc_root, settings_root=None):
+    if doc_root is None:
+        return {}
+    header_dist = []
+    footer_dist = []
+    cols_counts = []
+    cols_sep = []
+    first_page = []
+    borders = []
+    for sect in doc_root.findall('.//w:sectPr', NS):
+        header = sect.find('w:header', NS)
+        footer = sect.find('w:footer', NS)
+        if header is not None:
+            header_dist.append(twips_to_mm(safe_int(get_attr(header, 'val'))))
+        if footer is not None:
+            footer_dist.append(twips_to_mm(safe_int(get_attr(footer, 'val'))))
+        if sect.find('w:titlePg', NS) is not None:
+            first_page.append(True)
+        cols = sect.find('w:cols', NS)
+        if cols is not None:
+            num = safe_int(get_attr(cols, 'num'))
+            if num:
+                cols_counts.append(num)
+            sep = get_attr(cols, 'sep')
+            if sep is not None:
+                cols_sep.append(bool_from_val(sep))
+        pg_borders = sect.find('w:pgBorders', NS)
+        if pg_borders is not None:
+            for side in ('top', 'left', 'bottom', 'right'):
+                border = pg_borders.find('w:%s' % side, NS)
+                if border is None:
+                    continue
+                color = normalize_docx_color(get_attr(border, 'color'))
+                size_val = safe_int(get_attr(border, 'sz'))
+                size_pt = round(size_val / 8.0, 2) if size_val is not None else None
+                if color or size_pt:
+                    borders.append({'color': color, 'size_pt': size_pt})
+    even_odd = None
+    if settings_root is not None and settings_root.find('w:evenAndOddHeaders', NS) is not None:
+        even_odd = True
+    return {
+        'header_distance_mm': average(header_dist),
+        'footer_distance_mm': average(footer_dist),
+        'different_first_page': any(first_page) if first_page else None,
+        'columns': {
+            'count': most_common(cols_counts),
+            'separator': most_common(cols_sep),
+        } if cols_counts or cols_sep else None,
+        'page_borders': borders[0] if borders else None,
+        'odd_even_headers': even_odd,
+    }
+
+
+def extract_text_styles(doc_root, styles_root, theme_fonts=None, theme_colors=None):
+    if doc_root is None:
+        return {}
+    italic_count = 0
+    underline_count = 0
+    small_caps_count = 0
+    total_runs = 0
+    for rpr in doc_root.findall('.//w:rPr', NS):
+        total_runs += 1
+        italic_el = rpr.find('w:i', NS) or rpr.find('w:iCs', NS)
+        if italic_el is not None and bool_from_val(get_attr(italic_el, 'val')):
+            italic_count += 1
+        underline_el = rpr.find('w:u', NS)
+        if underline_el is not None:
+            uval = get_attr(underline_el, 'val')
+            if uval is None or str(uval).lower() not in ('none', '0', 'false', 'off'):
+                underline_count += 1
+        scaps = rpr.find('w:smallCaps', NS) or rpr.find('w:scaps', NS)
+        if scaps is not None and bool_from_val(get_attr(scaps, 'val')):
+            small_caps_count += 1
+    hyperlink_style = None
+    if styles_root is not None:
+        for style in styles_root.findall('w:style', NS):
+            name = (get_attr(style.find('w:name', NS), 'val') or '').lower()
+            style_id = (get_attr(style, 'styleId') or '').lower()
+            if name == 'hyperlink' or style_id == 'hyperlink':
+                rpr = parse_rpr(style.find('w:rPr', NS), theme_fonts=theme_fonts, theme_colors=theme_colors)
+                u_el = style.find('w:rPr/w:u', NS)
+                hyperlink_style = {
+                    'color': rpr.get('color'),
+                    'underline': True if u_el is None else bool_from_val(get_attr(u_el, 'val')),
+                }
+                break
+    return {
+        'italic_used': italic_count > 0,
+        'underline_used': underline_count > 0,
+        'small_caps_used': small_caps_count > 0,
+        'hyperlink_style': hyperlink_style,
+        'run_counts': {
+            'total': total_runs,
+            'italic': italic_count,
+            'underline': underline_count,
+            'small_caps': small_caps_count,
+        },
+    }
+
+
+def normalize_logo_position_to_page(position, layout, section_settings):
+    if not position:
+        return None
+    rel_h = (position.get('relative_from_h') or 'page').lower()
+    rel_v = (position.get('relative_from_v') or 'page').lower()
+    offset_x = position.get('offset_x_mm')
+    offset_y = position.get('offset_y_mm')
+    margins = (layout or {}).get('margins_mm') or {}
+    margin_left = margins.get('left')
+    margin_top = margins.get('top')
+    header_distance = None
+    if section_settings:
+        header_distance = section_settings.get('header_distance_mm')
+    approximate = False
+
+    base_x = 0.0
+    if rel_h in ('page',):
+        base_x = 0.0
+    elif rel_h in ('margin', 'column'):
+        if margin_left is not None:
+            base_x = margin_left
+        else:
+            approximate = True
+            base_x = 0.0
+    else:
+        approximate = True
+        base_x = 0.0
+
+    base_y = 0.0
+    if rel_v in ('page',):
+        base_y = 0.0
+    elif rel_v in ('margin',):
+        if margin_top is not None:
+            base_y = margin_top
+        else:
+            approximate = True
+            base_y = 0.0
+    elif rel_v in ('paragraph',):
+        if header_distance is not None:
+            base_y = header_distance
+        elif margin_top is not None:
+            base_y = margin_top
+            approximate = True
+        else:
+            approximate = True
+            base_y = 0.0
+    else:
+        approximate = True
+        base_y = 0.0
+
+    if offset_x is None or offset_y is None:
+        approximate = True
+    final_x = (base_x or 0.0) + (offset_x or 0.0)
+    final_y = (base_y or 0.0) + (offset_y or 0.0)
+
+    return {
+        'relative_from_h': 'page',
+        'relative_from_v': 'page',
+        'offset_x_mm': round(final_x, 2),
+        'offset_y_mm': round(final_y, 2),
+        'approximate': approximate,
+    }
+
+
 def build_extracted_from_docx(path, results_dir=None):
     extracted = {}
     results_dir = Path(results_dir) if results_dir else Path('results')
@@ -1203,6 +1765,8 @@ def build_extracted_from_docx(path, results_dir=None):
         theme_colors = parse_theme_colors(theme_root)
         styles_root = read_docx_xml(zipf, 'word/styles.xml')
         doc_root = read_docx_xml(zipf, 'word/document.xml')
+        numbering_root = read_docx_xml(zipf, 'word/numbering.xml')
+        settings_root = read_docx_xml(zipf, 'word/settings.xml')
         styles, _styles_by_name, defaults = parse_styles(
             styles_root,
             theme_fonts=theme_fonts,
@@ -1266,6 +1830,7 @@ def build_extracted_from_docx(path, results_dir=None):
         headings = extract_heading_styles(styles)
         heading_info = {
             'sizes': {},
+            'colors': {},
             'spacing_before': {},
             'spacing_after': {},
             'line_spacing': {},
@@ -1278,6 +1843,8 @@ def build_extracted_from_docx(path, results_dir=None):
             ppr = style.get('ppr', {})
             if rpr.get('font_size'):
                 heading_info['sizes']['h%d' % level] = rpr['font_size']
+            if rpr.get('color'):
+                heading_info['colors']['h%d' % level] = rpr['color']
             if ppr.get('spacing_before') is not None:
                 heading_info['spacing_before']['h%d' % level] = ppr['spacing_before']
             if ppr.get('spacing_after') is not None:
@@ -1292,6 +1859,26 @@ def build_extracted_from_docx(path, results_dir=None):
                 heading_info['font_weight'] = 'Bold'
         extracted['headings'] = heading_info
 
+        heading_from_paras = derive_heading_from_paragraphs(
+            doc_root,
+            styles,
+            defaults,
+            theme_fonts=theme_fonts,
+            theme_colors=theme_colors,
+        )
+        for key, value in (heading_from_paras.get('sizes') or {}).items():
+            heading_info['sizes'][key] = value
+        for key, value in (heading_from_paras.get('colors') or {}).items():
+            heading_info['colors'][key] = value
+        for key, value in (heading_from_paras.get('line_spacing') or {}).items():
+            heading_info['line_spacing'][key] = value
+        if heading_from_paras.get('font_family'):
+            heading_info['font_family'] = heading_from_paras['font_family']
+        if heading_from_paras.get('color'):
+            heading_info['color'] = heading_from_paras['color']
+        if heading_from_paras.get('font_weight'):
+            heading_info['font_weight'] = heading_from_paras['font_weight']
+
         header_info, footer_info = extract_headers_and_footers(
             doc_root,
             zipf,
@@ -1302,11 +1889,28 @@ def build_extracted_from_docx(path, results_dir=None):
         extracted['page_footer'] = derive_header_footer_format(footer_info)
         extracted['contact_info'] = extract_contact_info_from_extracted(extracted)
 
+        formatting = summarize_paragraph_formatting(doc_root, styles, defaults)
+        list_styles = extract_list_styles(doc_root, numbering_root, theme_fonts=theme_fonts, theme_colors=theme_colors)
+        if list_styles:
+            formatting['list_styles'] = list_styles
+        table_style = extract_table_style(styles_root)
+        if table_style:
+            formatting['table_style'] = table_style
+        section_settings = extract_section_settings(doc_root, settings_root=settings_root)
+        if section_settings:
+            formatting['section_settings'] = section_settings
+        text_styles = extract_text_styles(doc_root, styles_root, theme_fonts=theme_fonts, theme_colors=theme_colors)
+        if text_styles:
+            formatting['text_styles'] = text_styles
+        if formatting:
+            extracted['formatting'] = formatting
+
         header_targets, footer_targets = get_header_footer_targets(doc_root, zipf)
         document_targets = ['document.xml']
         assets_dir = results_dir / 'assets'
         assets_dir.mkdir(parents=True, exist_ok=True)
         used_names = set()
+        used_slugs = set()
         asset_map = {}
 
         def add_assets_from_targets(targets, source_label):
@@ -1315,17 +1919,26 @@ def build_extracted_from_docx(path, results_dir=None):
                 if not part_path.startswith('word/'):
                     part_path = 'word/' + part_path
                 image_targets = find_docx_images_in_part(zipf, part_path)
-                for image_target in image_targets:
+                for image_target, size_list, position_list in image_targets:
                     if image_target in asset_map:
                         asset_map[image_target]['sources'].add(source_label)
+                        if size_list:
+                            asset_map[image_target]['sizes_mm'].extend(size_list)
+                        if position_list:
+                            asset_map[image_target]['positions'].extend(position_list)
                         continue
-                    saved_path = save_zip_member(zipf, image_target, assets_dir, used_names)
-                    if not saved_path:
+                    filename = save_zip_member(zipf, image_target, assets_dir, used_names)
+                    if not filename:
                         continue
+                    base_slug = slugify('%s-%s' % (source_label, Path(image_target).stem))
+                    slug = unique_slug(base_slug, used_slugs)
                     asset_map[image_target] = {
-                        'file': str(saved_path),
+                        'slug': slug,
+                        'filename': filename,
                         'original': image_target,
                         'sources': {source_label},
+                        'sizes_mm': list(size_list),
+                        'positions': list(position_list),
                     }
 
         add_assets_from_targets(header_targets, 'header')
@@ -1333,16 +1946,34 @@ def build_extracted_from_docx(path, results_dir=None):
         add_assets_from_targets(document_targets, 'document')
 
         assets = []
-        logo_files = []
+        logo_slug = None
+        logo_size = None
         for item in asset_map.values():
             item['sources'] = sorted(item['sources'])
+            sizes = item.get('sizes_mm') or []
+            if sizes:
+                max_size = max(sizes, key=lambda v: v[0] * v[1])
+                item['width_mm'] = max_size[0]
+                item['height_mm'] = max_size[1]
+            item.pop('sizes_mm', None)
+            positions = item.get('positions') or []
+            if positions:
+                chosen = positions[-1]
+                item['position'] = chosen
+            item.pop('positions', None)
             assets.append(item)
             if 'header' in item['sources']:
-                logo_files.append(item['file'])
+                logo_slug = item['slug']
+                if item.get('width_mm') and item.get('height_mm'):
+                    logo_size = (item['width_mm'], item['height_mm'])
+                if item.get('position'):
+                    extracted['logo_position'] = item['position']
         if assets:
             extracted['assets'] = assets
-        if logo_files:
-            extracted['logo_files'] = sorted(logo_files)
+        if logo_slug:
+            extracted['logo_asset_slug'] = logo_slug
+            if logo_size:
+                extracted['logo_size_mm'] = logo_size
 
     return extracted
 
@@ -1486,16 +2117,17 @@ def build_extracted_from_pdf(path):
     return extracted
 
 
-def build_profile(extracted):
-    profile = deepcopy(DEFAULT_PROFILE)
+def build_profile(extracted, base_profile=None):
+    profile = deepcopy(base_profile) if base_profile is not None else deepcopy(DEFAULT_PROFILE)
 
     layout = extracted.get('layout') or {}
-    if layout.get('page_size'):
-        profile['layout']['page_size'] = layout['page_size']
-    if layout.get('orientation'):
-        profile['layout']['orientation'] = layout['orientation']
-    if layout.get('margins_mm'):
-        profile['layout']['margins_mm'] = layout['margins_mm']
+    if 'layout' in profile:
+        if layout.get('page_size') and 'page_size' in profile['layout']:
+            profile['layout']['page_size'] = layout['page_size']
+        if layout.get('orientation') and 'orientation' in profile['layout']:
+            profile['layout']['orientation'] = layout['orientation']
+        if layout.get('margins_mm') and 'margins_mm' in profile['layout']:
+            profile['layout']['margins_mm'] = layout['margins_mm']
 
     body = dict(extracted.get('body') or {})
     colors_used = extracted.get('colors_used') or set()
@@ -1514,119 +2146,174 @@ def build_profile(extracted):
         body['font_weight'] = font_weight
     if body.get('font_weight') is None and body.get('font_family'):
         body['font_weight'] = 'Regular'
-    if body.get('font_family'):
-        profile['typography']['body']['font_family'] = body['font_family']
-        profile['typography']['lists']['font_family'] = body['font_family']
-        profile['typography']['quote']['font_family'] = body['font_family']
-        profile['typography']['table']['font_family'] = body['font_family']
-    if body.get('font_weight'):
-        profile['typography']['body']['font_weight'] = body['font_weight']
-        profile['typography']['lists']['font_weight'] = body['font_weight']
-        profile['typography']['quote']['font_weight'] = body['font_weight']
-        profile['typography']['table']['font_weight'] = body['font_weight']
-    if body.get('font_size'):
-        profile['typography']['body']['font_size'] = body['font_size']
-        profile['typography']['lists']['font_size'] = body['font_size']
-        profile['typography']['quote']['font_size'] = body['font_size']
-        profile['typography']['table']['font_size'] = body['font_size']
-    if body.get('text_color'):
-        profile['typography']['body']['text_color'] = body['text_color']
-        profile['typography']['lists']['bullet_color'] = body['text_color']
-        profile['typography']['quote']['text_color'] = body['text_color']
-        profile['typography']['table']['text_color'] = body['text_color']
-    if body.get('line_spacing'):
-        profile['typography']['body']['line_spacing'] = body['line_spacing']
-        profile['typography']['lists']['line_spacing'] = body['line_spacing']
-        profile['typography']['quote']['line_spacing'] = body['line_spacing']
-        profile['typography']['table']['line_spacing'] = body['line_spacing']
-    if body.get('spacing_before') is not None:
-        profile['typography']['body']['paragraph_spacing']['before'] = body['spacing_before']
-    if body.get('spacing_after') is not None:
-        profile['typography']['body']['paragraph_spacing']['after'] = body['spacing_after']
-    if body.get('alignment'):
-        profile['typography']['body']['alignment'] = body['alignment']
+
+    if 'typography' in profile:
+        if 'body' in profile['typography']:
+            if body.get('font_family') and 'font_family' in profile['typography']['body']:
+                profile['typography']['body']['font_family'] = body['font_family']
+            if body.get('font_weight') and 'font_weight' in profile['typography']['body']:
+                profile['typography']['body']['font_weight'] = body['font_weight']
+            if body.get('font_size') and 'font_size' in profile['typography']['body']:
+                profile['typography']['body']['font_size'] = body['font_size']
+            if body.get('text_color') and 'text_color' in profile['typography']['body']:
+                profile['typography']['body']['text_color'] = body['text_color']
+            if body.get('line_spacing') and 'line_spacing' in profile['typography']['body']:
+                profile['typography']['body']['line_spacing'] = body['line_spacing']
+            if body.get('spacing_before') is not None:
+                if 'paragraph_spacing' in profile['typography']['body'] and 'before' in profile['typography']['body']['paragraph_spacing']:
+                    profile['typography']['body']['paragraph_spacing']['before'] = body['spacing_before']
+            if body.get('spacing_after') is not None:
+                if 'paragraph_spacing' in profile['typography']['body'] and 'after' in profile['typography']['body']['paragraph_spacing']:
+                    profile['typography']['body']['paragraph_spacing']['after'] = body['spacing_after']
+            if body.get('alignment') and 'alignment' in profile['typography']['body']:
+                profile['typography']['body']['alignment'] = body['alignment']
+
+        for key in ('lists', 'quote', 'table'):
+            if key not in profile['typography']:
+                continue
+            if body.get('font_family') and 'font_family' in profile['typography'][key]:
+                profile['typography'][key]['font_family'] = body['font_family']
+            if body.get('font_weight') and 'font_weight' in profile['typography'][key]:
+                profile['typography'][key]['font_weight'] = body['font_weight']
+            if body.get('font_size') and 'font_size' in profile['typography'][key]:
+                profile['typography'][key]['font_size'] = body['font_size']
+            if body.get('text_color'):
+                color_key = 'bullet_color' if key == 'lists' else 'text_color'
+                if color_key in profile['typography'][key]:
+                    profile['typography'][key][color_key] = body['text_color']
+            if body.get('line_spacing') and 'line_spacing' in profile['typography'][key]:
+                profile['typography'][key]['line_spacing'] = body['line_spacing']
 
     headings = extracted.get('headings') or {}
-    for key, value in (headings.get('sizes') or {}).items():
-        profile['typography']['headings']['sizes'][key] = value
-    if headings.get('font_family'):
-        profile['typography']['headings']['font_family'] = headings['font_family']
-    elif body.get('font_family'):
-        profile['typography']['headings']['font_family'] = body['font_family']
-    if headings.get('font_weight'):
-        profile['typography']['headings']['font_weight'] = headings['font_weight']
-    elif body.get('font_weight'):
-        profile['typography']['headings']['font_weight'] = body['font_weight']
-    if headings.get('color'):
-        profile['typography']['headings']['color'] = headings['color']
-    elif body.get('text_color'):
-        profile['typography']['headings']['color'] = body['text_color']
-    for key, value in (headings.get('spacing_before') or {}).items():
-        profile['typography']['headings']['spacing_before'][key] = value
-    for key, value in (headings.get('spacing_after') or {}).items():
-        profile['typography']['headings']['spacing_after'][key] = value
-    for key, value in (headings.get('line_spacing') or {}).items():
-        profile['typography']['headings']['line_spacing'][key] = value
+    if 'typography' in profile and 'headings' in profile['typography']:
+        for key, value in (headings.get('sizes') or {}).items():
+            if 'sizes' in profile['typography']['headings']:
+                profile['typography']['headings']['sizes'][key] = value
+        heading_colors = headings.get('colors') or {}
+        if heading_colors:
+            profile['typography']['headings'].setdefault('colors', {})
+            for key, value in heading_colors.items():
+                profile['typography']['headings']['colors'][key] = value
+        if headings.get('font_family'):
+            if 'font_family' in profile['typography']['headings']:
+                profile['typography']['headings']['font_family'] = headings['font_family']
+        elif body.get('font_family'):
+            if 'font_family' in profile['typography']['headings']:
+                profile['typography']['headings']['font_family'] = body['font_family']
+        if headings.get('font_weight'):
+            if 'font_weight' in profile['typography']['headings']:
+                profile['typography']['headings']['font_weight'] = headings['font_weight']
+        elif body.get('font_weight'):
+            if 'font_weight' in profile['typography']['headings']:
+                profile['typography']['headings']['font_weight'] = body['font_weight']
+        if headings.get('color'):
+            if 'color' in profile['typography']['headings']:
+                profile['typography']['headings']['color'] = headings['color']
+        elif body.get('text_color'):
+            if 'color' in profile['typography']['headings']:
+                profile['typography']['headings']['color'] = body['text_color']
+        for key, value in (headings.get('spacing_before') or {}).items():
+            if 'spacing_before' in profile['typography']['headings']:
+                profile['typography']['headings']['spacing_before'][key] = value
+        for key, value in (headings.get('spacing_after') or {}).items():
+            if 'spacing_after' in profile['typography']['headings']:
+                profile['typography']['headings']['spacing_after'][key] = value
+        for key, value in (headings.get('line_spacing') or {}).items():
+            if 'line_spacing' in profile['typography']['headings']:
+                profile['typography']['headings']['line_spacing'][key] = value
 
     header = extracted.get('page_header') or {}
-    if header.get('text'):
-        profile['page_header']['text'] = header['text']
-    if header.get('alignment'):
-        profile['page_header']['alignment'] = header['alignment']
-    if header.get('font_family'):
-        profile['page_header']['font_family'] = header['font_family']
-    if header.get('font_size'):
-        profile['page_header']['font_size'] = header['font_size']
-    if header.get('text_color'):
-        profile['page_header']['text_color'] = header['text_color']
+    if 'page_header' in profile:
+        if header.get('text') and 'text' in profile['page_header']:
+            profile['page_header']['text'] = '{{document_title}}'
+        if header.get('alignment') and 'alignment' in profile['page_header']:
+            profile['page_header']['alignment'] = header['alignment']
+        if header.get('font_family') and 'font_family' in profile['page_header']:
+            profile['page_header']['font_family'] = header['font_family']
+        if header.get('font_size') and 'font_size' in profile['page_header']:
+            profile['page_header']['font_size'] = header['font_size']
+        if header.get('text_color') and 'text_color' in profile['page_header']:
+            profile['page_header']['text_color'] = header['text_color']
 
     footer = extracted.get('page_footer') or {}
-    if footer.get('text'):
-        profile['page_footer']['text'] = footer['text']
-    if footer.get('alignment'):
-        profile['page_footer']['alignment'] = footer['alignment']
-    if footer.get('font_family'):
-        profile['page_footer']['font_family'] = footer['font_family']
-    if footer.get('font_size'):
-        profile['page_footer']['font_size'] = footer['font_size']
-    if footer.get('text_color'):
-        profile['page_footer']['text_color'] = footer['text_color']
+    if 'page_footer' in profile:
+        if 'text' in profile['page_footer']:
+            profile['page_footer']['text'] = 'Pagina {{page_number}} van {{total_pages}}'
+        if 'page_number_format' in profile['page_footer']:
+            profile['page_footer'].pop('page_number_format', None)
+        if footer.get('alignment') and 'alignment' in profile['page_footer']:
+            profile['page_footer']['alignment'] = footer['alignment']
+        if footer.get('font_family') and 'font_family' in profile['page_footer']:
+            profile['page_footer']['font_family'] = footer['font_family']
+        if footer.get('font_size') and 'font_size' in profile['page_footer']:
+            profile['page_footer']['font_size'] = footer['font_size']
+        if footer.get('text_color') and 'text_color' in profile['page_footer']:
+            profile['page_footer']['text_color'] = footer['text_color']
 
     contact = extracted.get('contact_info') or {}
     contact_fields = contact.get('fields') or []
-    profile['contact_info']['fields'] = contact_fields
-    profile['contact_info']['show'] = bool(contact_fields)
-    contact_format = contact.get('format') or {}
-    if contact_format.get('alignment'):
-        profile['contact_info']['alignment'] = contact_format['alignment']
-    if contact_format.get('font_family'):
-        profile['contact_info']['font_family'] = contact_format['font_family']
-    elif body.get('font_family'):
-        profile['contact_info']['font_family'] = body['font_family']
-    if contact_format.get('font_size'):
-        profile['contact_info']['font_size'] = contact_format['font_size']
-    elif body.get('font_size'):
-        profile['contact_info']['font_size'] = body['font_size']
-    if contact_format.get('text_color'):
-        profile['contact_info']['text_color'] = contact_format['text_color']
-    elif body.get('text_color'):
-        profile['contact_info']['text_color'] = body['text_color']
+    if 'contact_info' in profile:
+        if 'fields' in profile['contact_info']:
+            profile['contact_info']['fields'] = contact_fields
+        if 'show' in profile['contact_info']:
+            profile['contact_info']['show'] = bool(contact_fields)
+        contact_format = contact.get('format') or {}
+        if contact_format.get('alignment') and 'alignment' in profile['contact_info']:
+            profile['contact_info']['alignment'] = contact_format['alignment']
+        if contact_format.get('font_family') and 'font_family' in profile['contact_info']:
+            profile['contact_info']['font_family'] = contact_format['font_family']
+        elif body.get('font_family') and 'font_family' in profile['contact_info']:
+            profile['contact_info']['font_family'] = body['font_family']
+        if contact_format.get('font_size') and 'font_size' in profile['contact_info']:
+            profile['contact_info']['font_size'] = contact_format['font_size']
+        elif body.get('font_size') and 'font_size' in profile['contact_info']:
+            profile['contact_info']['font_size'] = body['font_size']
+        if contact_format.get('text_color') and 'text_color' in profile['contact_info']:
+            profile['contact_info']['text_color'] = contact_format['text_color']
+        elif body.get('text_color') and 'text_color' in profile['contact_info']:
+            profile['contact_info']['text_color'] = body['text_color']
 
     fonts_used = extracted.get('fonts_used') or {}
-    if isinstance(fonts_used, dict):
-        profile['extras']['fonts_used'] = [
-            {'name': font, 'sizes': sorted(size for size in sizes if size is not None)}
-            for font, sizes in sorted(fonts_used.items())
-        ]
-    if colors_used:
-        profile['extras']['colors_used'] = sorted(colors_used)
-    assets = extracted.get('assets') or []
-    if assets:
-        profile['extras']['assets'] = assets
-    logo_files = extracted.get('logo_files') or []
-    if logo_files:
-        profile['extras']['logo_files'] = logo_files
-        profile['page_header']['logo']['show'] = True
+    if 'extras' in profile:
+        if isinstance(fonts_used, dict) and 'fonts_used' in profile['extras']:
+            profile['extras']['fonts_used'] = [
+                {'name': font, 'sizes': sorted(size for size in sizes if size is not None)}
+                for font, sizes in sorted(fonts_used.items())
+            ]
+        if colors_used and 'colors_used' in profile['extras']:
+            profile['extras']['colors_used'] = sorted(colors_used)
+        assets = extracted.get('assets') or []
+        if assets and 'assets' in profile['extras']:
+            profile['extras']['assets'] = assets
+        formatting = extracted.get('formatting')
+        if formatting:
+            profile['extras']['formatting'] = formatting
+
+    logo_slug = extracted.get('logo_asset_slug')
+    if logo_slug and 'page_header' in profile and 'logo' in profile['page_header']:
+        if 'show' in profile['page_header']['logo']:
+            profile['page_header']['logo']['show'] = True
+        if 'asset_slug' in profile['page_header']['logo']:
+            profile['page_header']['logo']['asset_slug'] = logo_slug
+        logo_size = extracted.get('logo_size_mm')
+        if logo_size:
+            if 'max_width_mm' in profile['page_header']['logo']:
+                profile['page_header']['logo']['max_width_mm'] = round(logo_size[0], 2)
+            if 'max_height_mm' in profile['page_header']['logo']:
+                profile['page_header']['logo']['max_height_mm'] = round(logo_size[1], 2)
+        logo_position = extracted.get('logo_position')
+        if logo_position:
+            section_settings = None
+            formatting = extracted.get('formatting') or {}
+            if formatting:
+                section_settings = formatting.get('section_settings')
+            layout = extracted.get('layout') or {}
+            normalized = normalize_logo_position_to_page(logo_position, layout, section_settings)
+            profile['page_header']['logo']['positioning'] = normalized or logo_position
+
+    template_slug = extracted.get('template_asset_slug')
+    if template_slug:
+        profile['template_file'] = {'asset_slug': template_slug}
 
     return profile
 
@@ -1668,12 +2355,33 @@ def write_output(profile, output_path, fmt):
         return
     raise SystemExit('Unsupported format: %s' % fmt)
 
+def prune_sections(profile, excluded):
+    for key in list(profile.keys()):
+        if key in excluded:
+            profile.pop(key, None)
+    return profile
+
+
+def load_template(path):
+    if not path:
+        return None
+    template_path = Path(path)
+    if not template_path.exists():
+        return None
+    try:
+        with open(template_path, 'r', encoding='utf-8') as handle:
+            return json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise SystemExit('Template JSON parse error: %s' % exc)
+
 
 def main():
     parser = argparse.ArgumentParser(description='Extract branding profile from DOCX or PDF.')
     parser.add_argument('input_path', help='Path to .docx or .pdf')
     parser.add_argument('--output', help='Output filename (extension set by --format).')
     parser.add_argument('--format', default='json', choices=['json', 'xlsx'], help='Output format')
+    parser.add_argument('--template', default='results/finc.json', help='Base template JSON path.')
+    parser.add_argument('--template-docx', help='Optional DOCX template file to attach as asset.')
     args = parser.parse_args()
 
     input_path = Path(args.input_path)
@@ -1697,7 +2405,31 @@ def main():
     else:
         raise SystemExit('Unsupported input type: %s' % suffix)
 
-    profile = build_profile(extracted)
+    if args.template_docx:
+        template_docx = Path(args.template_docx)
+        if not template_docx.exists():
+            raise SystemExit('Template DOCX not found: %s' % template_docx)
+        assets_dir = results_dir / 'assets'
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        used_names = set()
+        existing_assets = extracted.get('assets') or []
+        for item in existing_assets:
+            if 'filename' in item:
+                used_names.add(item['filename'])
+        filename = copy_asset_file(template_docx, assets_dir, used_names)
+        if filename:
+            extracted.setdefault('assets', []).append({
+                'slug': TEMPLATE_ASSET_SLUG,
+                'filename': filename,
+                'original': str(template_docx),
+                'sources': ['template'],
+            })
+            extracted['template_asset_slug'] = TEMPLATE_ASSET_SLUG
+
+    template_profile = load_template(args.template)
+    profile = build_profile(extracted, base_profile=template_profile)
+    profile = prune_sections(profile, EXCLUDED_SECTIONS)
+    profile['version'] = '2.0.0'
     write_output(profile, str(output_path), fmt)
     print('Wrote %s' % output_path)
 
