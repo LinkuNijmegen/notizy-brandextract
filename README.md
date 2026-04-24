@@ -24,6 +24,12 @@ python extract_branding.py path/to/file.pdf --format json
 python extract_branding.py path/to/file.docx --format xlsx
 ```
 
+Use this one:
+
+```bash
+python3 extract_branding.py input/document.docx --format json --template-docx input/templat.docx
+```
+
 ### Template (base profile)
 
 By default the script uses `results/finc.json` as the base template if it exists. Any sections not present in the template are not filled.
