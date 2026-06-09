@@ -2,3 +2,15 @@ results/*
 input/*
 .DS_Store
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+
+jobs/
