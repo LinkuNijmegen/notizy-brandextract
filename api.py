@@ -19,18 +19,17 @@ from extract_branding import (
     prune_sections,
 )
 
-REQUIRED_PLACEHOLDERS = ["{content}", "{{ document_title }}"]
+TEMPLATE_REQUIRED_PLACEHOLDER = "{content}"
 
 
-def _check_placeholders(doc_path: Path) -> list[str]:
-    """Return list of required placeholders missing from the DOCX."""
+def _docx_contains_placeholder(doc_path: Path, placeholder: str) -> bool:
     try:
         with zipfile.ZipFile(doc_path) as z:
             xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
         text = re.sub(r"<[^>]+>", "", xml)
-        return [p for p in REQUIRED_PLACEHOLDERS if p not in text]
+        return placeholder in text
     except Exception:
-        return []
+        return False
 
 
 app = FastAPI(title="docx-extract API")
@@ -41,6 +40,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.post("/check-template")
+async def check_template(template_docx: UploadFile = File(...)):
+    suffix = Path(template_docx.filename or "").suffix.lower()
+    if suffix != ".docx":
+        raise HTTPException(status_code=400, detail="Alleen DOCX bestanden zijn toegestaan")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpl_path = Path(tmp) / "template.docx"
+        tmpl_path.write_bytes(await template_docx.read())
+        if not _docx_contains_placeholder(tmpl_path, TEMPLATE_REQUIRED_PLACEHOLDER):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Template mist verplichte placeholder: {TEMPLATE_REQUIRED_PLACEHOLDER}",
+            )
+
+    return {"ok": True}
 
 
 @app.post("/extract")
@@ -56,11 +73,6 @@ async def extract(
         doc_path.write_bytes(await document.read())
 
         warnings = []
-        if doc_suffix == ".docx":
-            missing = _check_placeholders(doc_path)
-            if missing:
-                warnings.append(f"Verplichte placeholders niet gevonden: {', '.join(missing)}")
-
         try:
             if doc_suffix == ".docx":
                 extracted = build_extracted_from_docx(str(doc_path), results_dir=tmp_dir)
@@ -77,6 +89,7 @@ async def extract(
             tmpl_suffix = Path(template_docx.filename).suffix.lower()
             tmpl_path = tmp_dir / ("template" + tmpl_suffix)
             tmpl_path.write_bytes(await template_docx.read())
+
             assets_dir = tmp_dir / "assets"
             assets_dir.mkdir(exist_ok=True)
             used_names = {item["filename"] for item in (extracted.get("assets") or []) if "filename" in item}

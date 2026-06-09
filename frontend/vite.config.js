@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/extract': 'http://localhost:8000',
+      '/check-template': 'http://localhost:8000',
       '/jobs': 'http://localhost:8000',
     },
   },

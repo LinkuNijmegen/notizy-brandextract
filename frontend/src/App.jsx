@@ -642,8 +642,33 @@ function UploadForm({ onResult }) {
   const [error, setError] = useState(null)
   const [docFile, setDocFile] = useState(null)
   const [tmplFile, setTmplFile] = useState(null)
+  const [tmplError, setTmplError] = useState(null)
+  const [tmplChecking, setTmplChecking] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [tmplDragging, setTmplDragging] = useState(false)
+
+  const checkTemplate = async (file) => {
+    if (!file) { setTmplFile(null); setTmplError(null); return }
+    setTmplChecking(true)
+    setTmplError(null)
+    const fd = new FormData()
+    fd.append('template_docx', file)
+    try {
+      const res = await fetch('/check-template', { method: 'POST', body: fd })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setTmplError(err.detail || 'Template validatie mislukt, voeg {content} en {{ document_title }} toe.')
+        setTmplFile(null)
+      } else {
+        setTmplFile(file)
+      }
+    } catch {
+      setTmplError('Template validatie mislukt, voeg {content} en {{ document_title }} toe.')
+      setTmplFile(null)
+    } finally {
+      setTmplChecking(false)
+    }
+  }
 
   const handleDrop = useCallback((e) => {
     e.preventDefault()
@@ -656,7 +681,7 @@ function UploadForm({ onResult }) {
     e.preventDefault()
     setTmplDragging(false)
     const file = e.dataTransfer.files[0]
-    if (file) setTmplFile(file)
+    if (file) checkTemplate(file)
   }, [])
 
   const handleSubmit = async (e) => {
@@ -713,7 +738,7 @@ function UploadForm({ onResult }) {
           <div className="optional-field">
             <label>Template DOCX (optioneel)</label>
             <div
-              className={`dropzone dropzone--small${tmplDragging ? ' dragging' : ''}${tmplFile ? ' has-file' : ''}`}
+              className={`dropzone dropzone--small${tmplDragging ? ' dragging' : ''}${tmplFile ? ' has-file' : ''}${tmplError ? ' has-error' : ''}`}
               onDragOver={(e) => { e.preventDefault(); setTmplDragging(true) }}
               onDragLeave={() => setTmplDragging(false)}
               onDrop={handleTmplDrop}
@@ -724,18 +749,21 @@ function UploadForm({ onResult }) {
                 type="file"
                 accept=".docx"
                 style={{ display: 'none' }}
-                onChange={(e) => setTmplFile(e.target.files[0] || null)}
+                onChange={(e) => checkTemplate(e.target.files[0] || null)}
               />
-              {tmplFile
-                ? <span className="file-name">📄 {tmplFile.name}</span>
-                : <span className="dropzone-hint">Sleep DOCX hier of klik<br /><small>optioneel</small></span>
+              {tmplChecking
+                ? <span className="dropzone-hint">Controleren…</span>
+                : tmplFile
+                  ? <span className="file-name">📄 {tmplFile.name}</span>
+                  : <span className="dropzone-hint">Sleep DOCX hier of klik<br /><small>optioneel</small></span>
               }
             </div>
           </div>
 
+          {tmplError && <div className="error">{tmplError}</div>}
           {error && <div className="error">{error}</div>}
 
-          <button className="btn-primary btn-full" type="submit" disabled={!docFile || loading}>
+          <button className="btn-primary btn-full" type="submit" disabled={!docFile || loading || !!tmplError || tmplChecking}>
             {loading ? 'Bezig met extraheren…' : 'Extraheer branding'}
           </button>
         </form>
