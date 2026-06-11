@@ -45,8 +45,8 @@ app.add_middleware(
 @app.post("/check-template")
 async def check_template(template_docx: UploadFile = File(...)):
     suffix = Path(template_docx.filename or "").suffix.lower()
-    if suffix != ".docx":
-        raise HTTPException(status_code=400, detail="Alleen DOCX bestanden zijn toegestaan")
+    if suffix not in (".docx", ".dotm"):
+        raise HTTPException(status_code=400, detail="Alleen DOCX/DOTM bestanden zijn toegestaan")
 
     with tempfile.TemporaryDirectory() as tmp:
         tmpl_path = Path(tmp) / "template.docx"
@@ -74,7 +74,7 @@ async def extract(
 
         warnings = []
         try:
-            if doc_suffix == ".docx":
+            if doc_suffix in (".docx", ".dotm"):
                 extracted = build_extracted_from_docx(str(doc_path), results_dir=tmp_dir)
             elif doc_suffix == ".pdf":
                 extracted = build_extracted_from_pdf(str(doc_path))

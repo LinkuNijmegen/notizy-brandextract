@@ -725,18 +725,18 @@ function UploadForm({ onResult }) {
             <input
               id="doc-input"
               type="file"
-              accept=".docx,.pdf"
+              accept=".docx,.dotm,.pdf"
               style={{ display: 'none' }}
               onChange={(e) => setDocFile(e.target.files[0])}
             />
             {docFile
               ? <span className="file-name">📄 {docFile.name}</span>
-              : <span className="dropzone-hint">Sleep hier een DOCX of PDF<br /><small>of klik om te bladeren</small></span>
+              : <span className="dropzone-hint">Sleep hier een DOCX, DOTM of PDF<br /><small>of klik om te bladeren</small></span>
             }
           </div>
 
           <div className="optional-field">
-            <label>Template DOCX (optioneel)</label>
+            <label>Template DOCX / DOTM (optioneel)</label>
             <div
               className={`dropzone dropzone--small${tmplDragging ? ' dragging' : ''}${tmplFile ? ' has-file' : ''}${tmplError ? ' has-error' : ''}`}
               onDragOver={(e) => { e.preventDefault(); setTmplDragging(true) }}
@@ -747,7 +747,7 @@ function UploadForm({ onResult }) {
               <input
                 id="tmpl-input"
                 type="file"
-                accept=".docx"
+                accept=".docx,.dotm"
                 style={{ display: 'none' }}
                 onChange={(e) => checkTemplate(e.target.files[0] || null)}
               />
@@ -755,7 +755,7 @@ function UploadForm({ onResult }) {
                 ? <span className="dropzone-hint">Controleren…</span>
                 : tmplFile
                   ? <span className="file-name">📄 {tmplFile.name}</span>
-                  : <span className="dropzone-hint">Sleep DOCX hier of klik<br /><small>optioneel</small></span>
+                  : <span className="dropzone-hint">Sleep DOCX of DOTM hier of klik<br /><small>optioneel</small></span>
               }
             </div>
           </div>
