@@ -657,7 +657,8 @@ function UploadForm({ onResult }) {
       const res = await fetch('/check-template', { method: 'POST', body: fd })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        setTmplError(err.detail || 'Template validatie mislukt, voeg {content} en {{ document_title }} toe.')
+        const detail = Array.isArray(err.detail) ? err.detail.map(e => e.msg).join(', ') : err.detail
+        setTmplError(detail || 'Template validatie mislukt, voeg {content} en {{ document_title }} toe.')
         setTmplFile(null)
       } else {
         setTmplFile(file)

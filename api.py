@@ -25,9 +25,13 @@ TEMPLATE_REQUIRED_PLACEHOLDER = "{content}"
 def _docx_contains_placeholder(doc_path: Path, placeholder: str) -> bool:
     try:
         with zipfile.ZipFile(doc_path) as z:
-            xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
-        text = re.sub(r"<[^>]+>", "", xml)
-        return placeholder in text
+            for name in z.namelist():
+                if name.startswith("word/") and name.endswith(".xml"):
+                    xml = z.read(name).decode("utf-8", errors="ignore")
+                    text = re.sub(r"<[^>]+>", "", xml)
+                    if placeholder in text:
+                        return True
+        return False
     except Exception:
         return False
 
