@@ -1,0 +1,84 @@
+{% extends "brandextract/base.html" %}
+{% load static %}
+
+{% block content %}
+{% csrf_token %}
+
+<div class="upload-container" id="upload-view">
+  <div class="upload-card">
+    <h1>Branding Extractor</h1>
+    <p class="subtitle">Upload een DOCX of PDF om branding te extraheren</p>
+
+    <form id="upload-form">
+      <div class="dropzone" id="doc-dropzone">
+        <input id="doc-input" type="file" accept=".docx,.pdf" style="display: none">
+        <span class="dropzone-hint">Sleep hier een DOCX of PDF<br><small>of klik om te bladeren</small></span>
+      </div>
+
+      <div class="optional-field">
+        <label>Template DOCX (optioneel)</label>
+        <div class="dropzone dropzone--small" id="tmpl-dropzone">
+          <input id="tmpl-input" type="file" accept=".docx" style="display: none">
+          <span class="dropzone-hint">Sleep DOCX hier of klik<br><small>optioneel</small></span>
+        </div>
+      </div>
+
+      <div class="error" id="upload-error" hidden></div>
+
+      <button class="btn-primary btn-full" type="submit" id="submit-btn" disabled>Extraheer branding</button>
+    </form>
+  </div>
+</div>
+
+<div class="viewer" id="viewer-view" hidden>
+  <div class="viewer-header">
+    <h2>Branding profiel</h2>
+    <div class="viewer-actions">
+      <button class="btn-secondary" id="reset-btn">Nieuwe extractie</button>
+      <button class="btn-primary" id="copy-btn">Kopieer JSON</button>
+    </div>
+  </div>
+
+  <div class="viewer-warnings" id="viewer-warnings" hidden></div>
+
+  <div class="split-view">
+    <div class="split-left">
+      <div class="panel-header panel-header--dark">JSON</div>
+      <div class="json-editor" id="json-editor-wrap">
+        <textarea id="json-editor"></textarea>
+      </div>
+      <div class="json-parse-error" id="json-parse-error" hidden></div>
+    </div>
+
+    <div class="form-panel">
+      <div class="panel-header">
+        <div class="form-tabs">
+          {% for tab in tabs %}
+            <button class="form-tab{% if forloop.first %} active{% endif %}" data-tab="{{ tab.key }}">{{ tab.label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="form-scroll" id="form-scroll">
+        {% for tab in tabs %}
+          <div class="form-tab-content" data-tab-panel="{{ tab.key }}" {% if not forloop.first %}hidden{% endif %}>
+            {% for section in tab.sections %}
+              {% if section.title %}
+                <h4 class="form-section-title">
+                  {{ section.title }}{% if section.count_path %} (<span data-count-path="{{ section.count_path }}">0</span>){% endif %}
+                </h4>
+              {% endif %}
+              {% for field in section.fields %}
+                {% include "brandextract/partials/_field.html" %}
+              {% endfor %}
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'brandextract/js/app.js' %}"></script>
+{% endblock %}

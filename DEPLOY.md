@@ -1,92 +1,125 @@
-# Deploy naar Railway
+# Deploy naar eigen VPS
+
+Django + gunicorn achter nginx. Eén server, geen database, geen Node.
 
 ## Vereisten
 
-- GitHub account
-- Railway account (railway.app) — gratis tier voldoet
-- Code staat in een GitHub repository
+- Ubuntu/Debian VPS met root/sudo
+- Python 3.11+
+- nginx
+- Domeinnaam die naar de server wijst
 
 ---
 
-## Stap 1 — Push naar GitHub
-
-Als je nog geen GitHub repo hebt:
+## Stap 1 — Code plaatsen
 
 ```bash
-git init
-git add .
-git commit -m "Initial commit"
-gh repo create docx-extract --private --push --source .
+sudo mkdir -p /srv/brandextract
+sudo chown $USER /srv/brandextract
+git clone <repo-url> /srv/brandextract
+cd /srv/brandextract
 ```
 
-Of via github.com: New repository → push bestaande code.
+## Stap 2 — Virtualenv
 
----
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
 
-## Stap 2 — Project aanmaken op Railway
+## Stap 3 — Omgevingsvariabelen
 
-1. Ga naar [railway.app](https://railway.app) en log in
-2. Klik **New Project**
-3. Kies **Deploy from GitHub repo**
-4. Selecteer je `docx-extract` repository
-5. Railway detecteert automatisch `railway.toml` en start de build
+Alles komt uit de systemd unit — er is geen `.env`-bestand.
 
-De build doet automatisch:
-- `pip install -r requirements.txt`
-- `cd frontend && npm install && npm run build`
-- Start: `uvicorn api:app --host 0.0.0.0 --port $PORT`
+| Variabele | Waarde |
+|---|---|
+| `DJANGO_SECRET_KEY` | willekeurige lange string, genereer met `python -c "import secrets;print(secrets.token_urlsafe(50))"` |
+| `DJANGO_DEBUG` | `False` |
+| `DJANGO_ALLOWED_HOSTS` | `extractor.example.com` (komma-gescheiden bij meerdere) |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://extractor.example.com` |
+| `DJANGO_SECURE_SSL` | `False` tot HTTPS draait, daarna `True` |
 
----
+## Stap 4 — Statische bestanden
 
-## Stap 3 — Domein instellen
+```bash
+DJANGO_DEBUG=False .venv/bin/python manage.py collectstatic --noinput
+```
 
-1. In Railway: klik op je service → tabblad **Settings**
-2. Scroll naar **Networking** → **Generate Domain**
-3. Je krijgt een URL zoals `docx-extract-production.up.railway.app`
+Levert `/srv/brandextract/staticfiles/`. Nginx serveert die map rechtstreeks.
 
----
+## Stap 5 — gunicorn als service
 
-## Stap 4 — Verifiëren
+```bash
+sudo cp deploy/gunicorn.service /etc/systemd/system/brandextract.service
+sudo nano /etc/systemd/system/brandextract.service   # vul secret key + hostname in
+sudo systemctl daemon-reload
+sudo systemctl enable --now brandextract
+sudo systemctl status brandextract
+```
 
-Open de gegenereerde URL in je browser. Je ziet de Branding Extractor interface.
+## Stap 6 — nginx
 
-Test: upload een DOCX → profiel moet verschijnen.
+```bash
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/brandextract
+sudo nano /etc/nginx/sites-available/brandextract   # vul server_name in
+sudo ln -s /etc/nginx/sites-available/brandextract /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+## Stap 7 — HTTPS
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d extractor.example.com
+```
+
+Zet daarna pas `DJANGO_SECURE_SSL=True` in de systemd unit en herstart de service.
+Dat schakelt HSTS, secure cookies en de HTTPS-redirect in Django in. Eerder aanzetten
+levert een redirect-lus op, want er is dan nog geen HTTPS.
+
+```bash
+sudo systemctl restart brandextract
+```
+
+## Stap 8 — Verifiëren
+
+Open het domein in de browser. Je ziet de Branding Extractor. Upload een DOCX → profiel verschijnt.
 
 ---
 
 ## Updates deployen
 
-Elke push naar de `main` branch triggert automatisch een nieuwe deploy op Railway.
-
 ```bash
-git add .
-git commit -m "update"
-git push
+cd /srv/brandextract
+git pull
+.venv/bin/pip install -r requirements.txt
+DJANGO_DEBUG=False .venv/bin/python manage.py collectstatic --noinput
+sudo systemctl restart brandextract
 ```
 
 ---
 
-## Gratis tier limieten
+## Uploadlimiet aanpassen
 
-| Resource | Limiet |
-|----------|--------|
-| Credits | $5/maand |
-| RAM | 512 MB |
-| CPU | Gedeeld |
-| Opslag | Geen persistent (niet nodig — alles in memory) |
+Op twee plekken tegelijk wijzigen, anders geeft nginx een 413:
 
-Voor licht gebruik (intern tool, occasionele extracties) past dit ruim binnen $5/maand.
+- `config/settings.py` → `DATA_UPLOAD_MAX_MEMORY_SIZE` en `FILE_UPLOAD_MAX_MEMORY_SIZE`
+- `deploy/nginx.conf` → `client_max_body_size`
 
 ---
 
 ## Lokaal draaien (ontwikkeling)
 
 ```bash
-# Terminal 1 — backend
-uvicorn api:app --reload
-
-# Terminal 2 — frontend dev server
-cd frontend && npm run dev
+.venv/bin/python manage.py runserver
 ```
 
-Frontend dev server draait op `localhost:5173` en proxyt API calls naar `localhost:8000`.
+Draait op `localhost:8000`, statics worden door Django zelf geserveerd.
+
+---
+
+## Logs
+
+```bash
+sudo journalctl -u brandextract -f
+```

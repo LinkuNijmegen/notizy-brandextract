@@ -1,0 +1,22 @@
+{% load static %}<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Branding Extractor{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'brandextract/vendor/codemirror/lib/codemirror.css' %}">
+  <link rel="stylesheet" href="{% static 'brandextract/vendor/codemirror/theme/material-darker.css' %}">
+  <link rel="stylesheet" href="{% static 'brandextract/vendor/codemirror/addon/fold/foldgutter.css' %}">
+  <link rel="stylesheet" href="{% static 'brandextract/css/app.css' %}">
+</head>
+<body>
+  {% block content %}{% endblock %}
+
+  <script src="{% static 'brandextract/vendor/codemirror/lib/codemirror.js' %}"></script>
+  <script src="{% static 'brandextract/vendor/codemirror/mode/javascript/javascript.js' %}"></script>
+  <script src="{% static 'brandextract/vendor/codemirror/addon/fold/foldcode.js' %}"></script>
+  <script src="{% static 'brandextract/vendor/codemirror/addon/fold/foldgutter.js' %}"></script>
+  <script src="{% static 'brandextract/vendor/codemirror/addon/fold/brace-fold.js' %}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

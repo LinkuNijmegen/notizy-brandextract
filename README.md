@@ -4,30 +4,39 @@ Extracts branding information (fonts, headings, headers/footers, margins, spacin
 
 ## Requirements
 
-- Python 3.9+
-- For PDF input: `pdfplumber`
-- For XLSX output: `openpyxl`
-
-Install optional dependencies:
+- Python 3.11+
 
 ```bash
-pip install pdfplumber openpyxl
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
-## Usage
+## Web app
 
-Run the script with a DOCX or PDF file:
+Django serves the upload page and the profile editor:
 
 ```bash
-python extract_branding.py path/to/file.docx --format json
-python extract_branding.py path/to/file.pdf --format json
-python extract_branding.py path/to/file.docx --format xlsx
+python manage.py runserver
+```
+
+Open `http://localhost:8000`. Upload a DOCX or PDF, edit the resulting profile in the
+form or directly in the JSON panel, and copy the result. See `DEPLOY.md` for the
+VPS setup (gunicorn + nginx).
+
+## CLI usage
+
+Run the extractor with a DOCX or PDF file:
+
+```bash
+python -m brandextract.extract_branding path/to/file.docx --format json
+python -m brandextract.extract_branding path/to/file.pdf --format json
+python -m brandextract.extract_branding path/to/file.docx --format xlsx
 ```
 
 Use this one:
 
 ```bash
-python3 extract_branding.py input/document.docx --format json --template-docx input/templat.docx
+python -m brandextract.extract_branding input/document.docx --format json --template-docx input/templat.docx
 ```
 
 ### Template (base profile)
@@ -37,7 +46,7 @@ By default the script uses `results/finc.json` as the base template if it exists
 You can override this with `--template`:
 
 ```bash
-python extract_branding.py path/to/file.docx --format json --template path/to/template.json
+python -m brandextract.extract_branding path/to/file.docx --format json --template path/to/template.json
 ```
 
 ### Optional DOCX template asset
@@ -45,7 +54,7 @@ python extract_branding.py path/to/file.docx --format json --template path/to/te
 Attach a DOCX template file as an asset and reference it in the output:
 
 ```bash
-python extract_branding.py path/to/file.docx --format json --template-docx path/to/template.docx
+python -m brandextract.extract_branding path/to/file.docx --format json --template-docx path/to/template.docx
 ```
 
 This adds `template_file: { "asset_slug": "template-file" }` and stores the DOCX in `results/assets` with slug `template-file`.
@@ -58,7 +67,7 @@ All outputs are saved to `./results`.
 - You can set a custom filename with `--output` (extension is derived from `--format`):
 
 ```bash
-python extract_branding.py path/to/file.docx --format json --output klantA
+python -m brandextract.extract_branding path/to/file.docx --format json --output klantA
 ```
 
 This produces `results/klantA.json`.

@@ -237,7 +237,7 @@ body {
   flex-direction: column;
 }
 
-.json-editor .cm-editor {
+.json-editor .CodeMirror {
   flex: 1;
   height: 100%;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace !important;
@@ -245,21 +245,24 @@ body {
   line-height: 1.65;
 }
 
-.json-editor .cm-editor,
-.json-editor .cm-gutters {
+.json-editor .CodeMirror,
+.json-editor .CodeMirror-gutters {
   background-color: #1e1e1e !important;
+  border: none;
 }
 
-.json-editor .cm-scroller {
-  overflow: auto;
+.json-editor .CodeMirror-foldgutter {
+  width: 14px;
 }
 
-.json-editor .cm-foldGutter span {
+.json-editor .CodeMirror-foldgutter-open,
+.json-editor .CodeMirror-foldgutter-folded {
   color: #555;
   cursor: pointer;
 }
 
-.json-editor .cm-foldGutter span:hover {
+.json-editor .CodeMirror-foldgutter-open:hover,
+.json-editor .CodeMirror-foldgutter-folded:hover {
   color: #aaa;
 }
 

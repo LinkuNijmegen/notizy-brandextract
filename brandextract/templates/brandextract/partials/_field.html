@@ -1,0 +1,73 @@
+{% if field.type == 'checkbox' %}
+  <div class="field-row">
+    <label class="field-label">{{ field.label }}</label>
+    <label class="field-toggle">
+      <input type="checkbox" data-path="{{ field.path }}" data-type="checkbox">
+      <span class="toggle-track"></span>
+      <span class="toggle-hint">Uit</span>
+    </label>
+  </div>
+
+{% elif field.type == 'color' %}
+  <div class="field-row">
+    <label class="field-label">{{ field.label }}</label>
+    <div class="field-color">
+      <input type="color" class="field-color-picker" data-path="{{ field.path }}" data-type="color-picker" value="#000000">
+      <input type="text" class="field-input field-color-text" data-path="{{ field.path }}" data-type="color" placeholder="null">
+    </div>
+  </div>
+
+{% elif field.type == 'select' %}
+  <div class="field-row">
+    <label class="field-label">{{ field.label }}</label>
+    <select class="field-input" data-path="{{ field.path }}" data-type="select">
+      {% for option in field.options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}
+    </select>
+  </div>
+
+{% elif field.type == 'textarea' %}
+  <div class="field-row field-row--top">
+    <label class="field-label">{{ field.label }}</label>
+    <textarea class="field-input field-textarea" rows="3" data-path="{{ field.path }}" data-type="text"
+              placeholder="{{ field.placeholder|default:'' }}"></textarea>
+  </div>
+
+{% elif field.type == 'string_list' %}
+  <div class="field-row field-row--top">
+    <label class="field-label">{{ field.label }}</label>
+    <textarea class="field-input field-textarea" rows="5" data-path="{{ field.path }}" data-type="string_list"
+              placeholder="{{ field.placeholder|default:'' }}"></textarea>
+  </div>
+
+{% elif field.type == 'per_level' %}
+  <div class="field-row per-level-row">
+    <label class="field-label">{{ field.label }}</label>
+    <div class="per-level-grid">
+      {% for level in field.levels %}
+        <div class="per-level-cell">
+          <span class="per-level-key">{{ level|upper }}</span>
+          {% if field.value_type == 'color' %}
+            <input type="color" class="per-level-color" data-path="{{ field.path }}.{{ level }}" data-type="color-picker" value="#000000">
+          {% else %}
+            <input type="number" step="any" class="per-level-input" data-path="{{ field.path }}.{{ level }}" data-type="number">
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+{% elif field.type == 'meta_items' %}
+  <div class="field-label-standalone">{{ field.label }}</div>
+  <div class="meta-items" data-path="{{ field.path }}" data-type="meta_items"></div>
+
+{% elif field.type == 'swatches' or field.type == 'fonts' or field.type == 'assets' %}
+  <div data-path="{{ field.path }}" data-type="{{ field.type }}"></div>
+
+{% else %}
+  <div class="field-row">
+    <label class="field-label">{{ field.label }}</label>
+    <input type="{{ field.type }}" class="field-input" data-path="{{ field.path }}" data-type="{{ field.type }}"
+           {% if field.type == 'number' %}step="any"{% endif %}
+           placeholder="{{ field.placeholder|default:'' }}">
+  </div>
+{% endif %}

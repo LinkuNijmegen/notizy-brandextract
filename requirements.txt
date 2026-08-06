@@ -1,6 +1,6 @@
-fastapi
-uvicorn[standard]
-python-multipart
+django>=5.2,<6.0
+djangorestframework
+gunicorn
+whitenoise
 pdfplumber
 openpyxl
-aiofiles
