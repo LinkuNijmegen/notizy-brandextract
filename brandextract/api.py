@@ -1,6 +1,4 @@
-import re
 import tempfile
-import zipfile
 from pathlib import Path
 
 from rest_framework import status
@@ -17,20 +15,6 @@ from .extract_branding import (
     copy_asset_file,
     prune_sections,
 )
-
-REQUIRED_PLACEHOLDERS = ["{content}", "{{ document_title }}"]
-
-
-def _check_placeholders(doc_path: Path) -> list[str]:
-    """Return list of required placeholders missing from the DOCX."""
-    try:
-        with zipfile.ZipFile(doc_path) as z:
-            xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
-        text = re.sub(r"<[^>]+>", "", xml)
-        return [p for p in REQUIRED_PLACEHOLDERS if p not in text]
-    except Exception:
-        return []
-
 
 def _save_upload(upload, dest: Path) -> None:
     with open(dest, "wb") as handle:
@@ -55,10 +39,6 @@ class ExtractView(APIView):
             _save_upload(document, doc_path)
 
             warnings = []
-            if doc_suffix == ".docx":
-                missing = _check_placeholders(doc_path)
-                if missing:
-                    warnings.append(f"Verplichte placeholders niet gevonden: {', '.join(missing)}")
 
             try:
                 if doc_suffix == ".docx":

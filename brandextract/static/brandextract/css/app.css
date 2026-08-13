@@ -12,6 +12,10 @@ body {
   line-height: 1.5;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 /* ── Upload ── */
 .upload-container {
   min-height: 100vh;
