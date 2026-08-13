@@ -5,19 +5,31 @@ Django + gunicorn achter nginx. Eén server, geen database, geen Node.
 ## Vereisten
 
 - Ubuntu/Debian VPS met root/sudo
-- Python 3.11+
+- Python 3.11+ inclusief `python3.11-venv` (Debian levert `venv` niet standaard mee)
 - nginx
+- supervisor
 - Domeinnaam die naar de server wijst
+
+```bash
+sudo apt install python3.11-venv
+```
 
 ---
 
 ## Stap 1 — Code plaatsen
 
+De app draait uit de home-map van de deploy-user, dus hier is geen root nodig:
+
 ```bash
-sudo mkdir -p /srv/brandextract
-sudo chown $USER /srv/brandextract
-git clone <repo-url> /srv/brandextract
-cd /srv/brandextract
+git clone <repo-url> /projects/notizybra_aa
+cd /projects/notizybra_aa
+```
+
+Nginx (`www-data`) moet wél door de home-map heen kunnen om `staticfiles/` te lezen.
+Home-mappen staan vaak op `0750`, en dan krijg je 403's op alle CSS en JS:
+
+```bash
+sudo chmod o+x /projects/notizybra_aa
 ```
 
 ## Stap 2 — Virtualenv
@@ -29,7 +41,7 @@ python3 -m venv .venv
 
 ## Stap 3 — Omgevingsvariabelen
 
-Alles komt uit de systemd unit — er is geen `.env`-bestand.
+Alles komt uit `deploy/supervisor.conf` — er is geen `.env`-bestand.
 
 | Variabele | Waarde |
 |---|---|
@@ -45,16 +57,26 @@ Alles komt uit de systemd unit — er is geen `.env`-bestand.
 DJANGO_DEBUG=False .venv/bin/python manage.py collectstatic --noinput
 ```
 
-Levert `/srv/brandextract/staticfiles/`. Nginx serveert die map rechtstreeks.
+Levert `/projects/notizybra_aa/staticfiles/`. Nginx serveert die map rechtstreeks.
 
-## Stap 5 — gunicorn als service
+## Stap 5 — gunicorn onder supervisor
 
 ```bash
-sudo cp deploy/gunicorn.service /etc/systemd/system/brandextract.service
-sudo nano /etc/systemd/system/brandextract.service   # vul secret key + hostname in
-sudo systemctl daemon-reload
-sudo systemctl enable --now brandextract
-sudo systemctl status brandextract
+sudo cp deploy/supervisor.conf /etc/supervisor/conf.d/brandextract.conf
+sudo nano /etc/supervisor/conf.d/brandextract.conf   # secret key, hostname, paden
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl status application
+```
+
+Het programma heet `application`, want dat is de naam die de deploy-pipeline herstart.
+Draait er al een ander programma onder die naam, kies dan een unieke naam en pas
+de laatste regel van de SSH-actie in de pipeline daarop aan.
+
+Controleer dat poort 8000 vrij is, anders start gunicorn niet:
+
+```bash
+ss -ltnp | grep 8000
 ```
 
 ## Stap 6 — nginx
@@ -73,12 +95,12 @@ sudo apt install certbot python3-certbot-nginx
 sudo certbot --nginx -d extractor.example.com
 ```
 
-Zet daarna pas `DJANGO_SECURE_SSL=True` in de systemd unit en herstart de service.
+Zet daarna pas `DJANGO_SECURE_SSL=True` in de supervisor-config en herstart de service.
 Dat schakelt HSTS, secure cookies en de HTTPS-redirect in Django in. Eerder aanzetten
 levert een redirect-lus op, want er is dan nog geen HTTPS.
 
 ```bash
-sudo systemctl restart brandextract
+sudo supervisorctl restart application
 ```
 
 ## Stap 8 — Verifiëren
@@ -90,11 +112,11 @@ Open het domein in de browser. Je ziet de Branding Extractor. Upload een DOCX �
 ## Updates deployen
 
 ```bash
-cd /srv/brandextract
+cd /projects/notizybra_aa
 git pull
 .venv/bin/pip install -r requirements.txt
 DJANGO_DEBUG=False .venv/bin/python manage.py collectstatic --noinput
-sudo systemctl restart brandextract
+sudo supervisorctl restart application
 ```
 
 ---
@@ -121,5 +143,5 @@ Draait op `localhost:8000`, statics worden door Django zelf geserveerd.
 ## Logs
 
 ```bash
-sudo journalctl -u brandextract -f
+sudo supervisorctl tail -f application
 ```

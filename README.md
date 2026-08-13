@@ -2,26 +2,39 @@
 
 Extracts branding information (fonts, headings, headers/footers, margins, spacing, colors) from DOCX or PDF files and maps it into a structured branding profile template. DOCX logos/images are also saved as assets.
 
-## Requirements
+## Local setup
 
-- Python 3.11+
+Requirements: Python 3.11+. No database, no Node.
 
 ```bash
-python -m venv .venv
+git clone <repo-url> brandextract
+cd brandextract
+
+python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-## Web app
+No `.env` needed: the dev defaults in `config/settings.py` (`DEBUG=True`,
+`ALLOWED_HOSTS=localhost,127.0.0.1`, insecure dev secret key) are already correct
+for local work. There are no models, so no `migrate` step.
 
-Django serves the upload page and the profile editor:
+Start the server:
 
 ```bash
-python manage.py runserver
+.venv/bin/python manage.py runserver
 ```
 
 Open `http://localhost:8000`. Upload a DOCX or PDF, edit the resulting profile in the
-form or directly in the JSON panel, and copy the result. See `DEPLOY.md` for the
-VPS setup (gunicorn + nginx).
+form or directly in the JSON panel, and copy the result. Static files are served by
+Django itself in DEBUG mode — `collectstatic` is only needed for production.
+
+For the CLI, run the module from the same venv (see [CLI usage](#cli-usage)):
+
+```bash
+.venv/bin/python -m brandextract.extract_branding input/document.docx --format json
+```
+
+See `DEPLOY.md` for the VPS setup (gunicorn + nginx).
 
 ## CLI usage
 
