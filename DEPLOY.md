@@ -41,7 +41,14 @@ python3 -m venv .venv
 
 ## Stap 3 — Omgevingsvariabelen
 
-Alles komt uit `deploy/supervisor.conf` — er is geen `.env`-bestand.
+Kopieer `.env.example` naar `.env` in de projectroot en vul de waarden in.
+Dat bestand staat in `.gitignore` en wordt bij het opstarten ingelezen door `config/settings.py`.
+
+```bash
+cp .env.example .env
+nano .env
+chmod 600 .env
+```
 
 | Variabele | Waarde |
 |---|---|
