@@ -32,7 +32,9 @@ CSRF_TRUSTED_ORIGINS = [
 
 
 # Aanzetten zodra HTTPS via certbot draait (zie DEPLOY.md stap 7).
-if os.environ.get('DJANGO_SECURE_SSL') == 'True':
+SECURE_SSL = os.environ.get('DJANGO_SECURE_SSL') == 'True'
+
+if SECURE_SSL:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = True
     SECURE_HSTS_SECONDS = 31536000
@@ -63,6 +65,10 @@ MIDDLEWARE = [
     'brandextract.middleware.RequireLoginMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# Vóór SecurityMiddleware, anders draait de SSL-redirect nog op het oude schema.
+if SECURE_SSL:
+    MIDDLEWARE.insert(0, 'brandextract.middleware.ForceHTTPSProtoMiddleware')
 
 ROOT_URLCONF = 'config.urls'
 
