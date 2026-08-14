@@ -4,7 +4,8 @@ Extracts branding information (fonts, headings, headers/footers, margins, spacin
 
 ## Local setup
 
-Requirements: Python 3.11+. No database, no Node.
+Requirements: Python 3.11+. No Node. The only database is a SQLite file holding the
+SSO users.
 
 ```bash
 git clone <repo-url> brandextract
@@ -14,9 +15,17 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-No `.env` needed: the dev defaults in `config/settings.py` (`DEBUG=True`,
-`ALLOWED_HOSTS=localhost,127.0.0.1`, insecure dev secret key) are already correct
-for local work. There are no models, so no `migrate` step.
+The dev defaults in `config/settings.py` (`DEBUG=True`,
+`ALLOWED_HOSTS=localhost,127.0.0.1`, insecure dev secret key) are correct for local
+work, but the app is behind Google Workspace SSO, so a `.env` with Google credentials
+is required — there is no password login to fall back on:
+
+```bash
+cp .env.example .env   # fill in GOOGLE_OIDC_CLIENT_ID/SECRET and GOOGLE_WORKSPACE_DOMAIN
+.venv/bin/python manage.py migrate
+```
+
+The OAuth client needs `http://localhost:8000/oidc/callback/` as an extra redirect URI.
 
 Start the server:
 
@@ -24,9 +33,10 @@ Start the server:
 .venv/bin/python manage.py runserver
 ```
 
-Open `http://localhost:8000`. Upload a DOCX or PDF, edit the resulting profile in the
-form or directly in the JSON panel, and copy the result. Static files are served by
-Django itself in DEBUG mode — `collectstatic` is only needed for production.
+Open `http://localhost:8000` and log in with a Workspace account. Upload a DOCX or PDF,
+edit the resulting profile in the form or directly in the JSON panel, and copy the
+result. Static files are served by Django itself in DEBUG mode — `collectstatic` is
+only needed for production.
 
 For the CLI, run the module from the same venv (see [CLI usage](#cli-usage)):
 

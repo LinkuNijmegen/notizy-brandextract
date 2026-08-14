@@ -1,6 +1,7 @@
 # Deploy naar eigen VPS
 
-Django + gunicorn achter nginx. Eén server, geen database, geen Node.
+Django + gunicorn achter nginx. Eén server, geen Node. De enige database is een
+SQLite-bestand voor de SSO-gebruikers.
 
 ## Vereisten
 
@@ -57,14 +58,30 @@ chmod 600 .env
 | `DJANGO_ALLOWED_HOSTS` | `extractor.example.com` (komma-gescheiden bij meerdere) |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://extractor.example.com` |
 | `DJANGO_SECURE_SSL` | `False` tot HTTPS draait, daarna `True` |
+| `GOOGLE_OIDC_CLIENT_ID` | client-ID van de OAuth-client (zie stap 3b) |
+| `GOOGLE_OIDC_CLIENT_SECRET` | client secret, nooit in git |
+| `GOOGLE_WORKSPACE_DOMAIN` | `notizy.com` — leeg laten weigert élke login |
 
-## Stap 4 — Statische bestanden
+## Stap 3b — Google OAuth-client
+
+In de Google Cloud Console van de Workspace-organisatie:
+
+- OAuth-client type **Web application**
+- Redirect-URI exact `https://<domein>/oidc/callback/`
+- User type **Internal**: externe accounts komen niet eens door het consent-scherm
+
+## Stap 4 — Statische bestanden en database
 
 ```bash
 DJANGO_DEBUG=False .venv/bin/python manage.py collectstatic --noinput
+DJANGO_DEBUG=False .venv/bin/python manage.py migrate
 ```
 
 Levert `/projects/notizybra_aa/staticfiles/`. Nginx serveert die map rechtstreeks.
+
+`migrate` maakt `db.sqlite3` in de projectroot; die bevat alleen de SSO-gebruikers.
+De user die gunicorn draait moet in de projectroot zelf kunnen schrijven, niet alleen
+in het DB-bestand — SQLite legt journal/WAL-bestanden ernaast.
 
 ## Stap 5 — gunicorn onder supervisor
 
@@ -112,7 +129,9 @@ sudo supervisorctl restart application
 
 ## Stap 8 — Verifiëren
 
-Open het domein in de browser. Je ziet de Branding Extractor. Upload een DOCX → profiel verschijnt.
+Open het domein in de browser. Je wordt doorgestuurd naar Google; na inloggen met een
+account van `GOOGLE_WORKSPACE_DOMAIN` zie je de Branding Extractor. Upload een DOCX en
+het profiel verschijnt.
 
 ---
 
@@ -123,6 +142,7 @@ cd /projects/notizybra_aa
 git pull
 .venv/bin/pip install -r requirements.txt
 DJANGO_DEBUG=False .venv/bin/python manage.py collectstatic --noinput
+DJANGO_DEBUG=False .venv/bin/python manage.py migrate
 sudo supervisorctl restart application
 ```
 

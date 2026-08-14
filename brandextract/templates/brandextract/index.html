@@ -27,6 +27,8 @@
 
       <button class="btn-primary btn-full" type="submit" id="submit-btn" disabled>Extraheer branding</button>
     </form>
+
+    {% include "brandextract/partials/_session.html" %}
   </div>
 </div>
 
@@ -34,6 +36,7 @@
   <div class="viewer-header">
     <h2>Branding profiel</h2>
     <div class="viewer-actions">
+      {% include "brandextract/partials/_session.html" %}
       <button class="btn-secondary" id="reset-btn">Nieuwe extractie</button>
       <button class="btn-primary" id="copy-btn">Kopieer JSON</button>
     </div>

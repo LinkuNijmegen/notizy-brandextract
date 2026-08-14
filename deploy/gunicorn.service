@@ -12,6 +12,10 @@ Environment="DJANGO_ALLOWED_HOSTS=extractor.example.com"
 Environment="DJANGO_CSRF_TRUSTED_ORIGINS=https://extractor.example.com"
 # Pas aanzetten nadat certbot HTTPS heeft ingericht (zie DEPLOY.md stap 7)
 Environment="DJANGO_SECURE_SSL=False"
+Environment="GOOGLE_OIDC_CLIENT_ID=CHANGE-ME"
+# Echte waarde alleen op de server invullen, nooit in git
+Environment="GOOGLE_OIDC_CLIENT_SECRET=CHANGE-ME"
+Environment="GOOGLE_WORKSPACE_DOMAIN=notizy.com"
 ExecStart=/srv/brandextract/.venv/bin/gunicorn config.wsgi:application \
     --workers 3 \
     --timeout 120 \
