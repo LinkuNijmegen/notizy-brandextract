@@ -1,0 +1,7 @@
+<div class="session">
+  <span class="session-email">{{ user.email }}</span>
+  <form class="session-logout" method="post" action="{% url 'oidc_logout' %}">
+    {% csrf_token %}
+    <button class="btn-secondary" type="submit">Uitloggen</button>
+  </form>
+</div>

@@ -425,6 +425,11 @@
         body: body,
       })
         .then(function (response) {
+          // Sessie verlopen: herladen zet de gebruiker terug op de Google-login.
+          if (response.status === 401) {
+            window.location.reload()
+            throw new Error('Sessie verlopen, opnieuw inloggen…')
+          }
           return response.json().catch(function () { return {} }).then(function (data) {
             if (!response.ok) throw new Error(data.detail || 'Extractie mislukt')
             return data
