@@ -15,7 +15,7 @@ Environment="DJANGO_SECURE_SSL=False"
 Environment="GOOGLE_OIDC_CLIENT_ID=CHANGE-ME"
 # Echte waarde alleen op de server invullen, nooit in git
 Environment="GOOGLE_OIDC_CLIENT_SECRET=CHANGE-ME"
-Environment="GOOGLE_WORKSPACE_DOMAIN=example.com"
+Environment="GOOGLE_WORKSPACE_DOMAIN=notizy.com"
 ExecStart=/srv/brandextract/.venv/bin/gunicorn config.wsgi:application \
     --workers 3 \
     --timeout 120 \

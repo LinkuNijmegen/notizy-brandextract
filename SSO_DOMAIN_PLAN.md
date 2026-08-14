@@ -9,14 +9,15 @@ Workspace-domein; alleen de waarde staat nog open. Nog niet uitgevoerd.
 (`verify_claims` in `brandextract/auth.py` geeft `False` bij een leeg domein). De app is
 dus dicht, niet stuk — er kan alleen nog niemand in.
 
-Openstaand: wordt het `notizy.nl` of `notizy.com`. `linku.nl` is vervallen; dat was een
-losse Workspace-organisatie en de enige reden om meerdere domeinen te ondersteunen.
+Besloten: **`notizy.com`**, scenario A. `linku.nl` is vervallen; dat was een losse
+Workspace-organisatie en de enige reden om meerdere domeinen te ondersteunen.
 
-## Scenario A — één domein (verwacht)
+## Scenario A — één domein (gekozen)
 
-Geen codewijziging. Alleen invullen:
+Geen codewijziging. `deploy/supervisor.conf`, `deploy/gunicorn.service` en `DEPLOY.md`
+staan al op `notizy.com`. Resteert:
 
-1. `.env` lokaal en `deploy/supervisor.conf` op de server: `GOOGLE_WORKSPACE_DOMAIN=<gekozen domein>`.
+1. `.env` lokaal en `deploy/supervisor.conf` op de server: `GOOGLE_WORKSPACE_DOMAIN=notizy.com`.
 2. Google Cloud Console, in de Workspace-organisatie van dat domein: OAuth-client type
    **Web application**, user type **Internal**, redirect-URI's
    `https://brandextract.notizy.nl/oidc/callback/` en `http://localhost:8000/oidc/callback/`.

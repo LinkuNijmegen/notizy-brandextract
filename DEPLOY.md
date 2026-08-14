@@ -60,7 +60,7 @@ chmod 600 .env
 | `DJANGO_SECURE_SSL` | `False` tot HTTPS draait, daarna `True` |
 | `GOOGLE_OIDC_CLIENT_ID` | client-ID van de OAuth-client (zie stap 3b) |
 | `GOOGLE_OIDC_CLIENT_SECRET` | client secret, nooit in git |
-| `GOOGLE_WORKSPACE_DOMAIN` | `notizy.nl` — leeg laten weigert élke login |
+| `GOOGLE_WORKSPACE_DOMAIN` | `notizy.com` — leeg laten weigert élke login |
 
 ## Stap 3b — Google OAuth-client
 
