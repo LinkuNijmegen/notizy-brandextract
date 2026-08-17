@@ -60,7 +60,7 @@ chmod 600 .env
 | `DJANGO_SECURE_SSL` | `False` tot HTTPS draait, daarna `True` |
 | `GOOGLE_OIDC_CLIENT_ID` | client-ID van de OAuth-client (zie stap 3b) |
 | `GOOGLE_OIDC_CLIENT_SECRET` | client secret, nooit in git |
-| `GOOGLE_WORKSPACE_DOMAINS` | `notizy.com,linku.nl` — komma-gescheiden, leeg laten weigert élke login |
+| `GOOGLE_WORKSPACE_DOMAIN` | `notizy.com` — leeg laten weigert élke login |
 
 ## Stap 3b — Google OAuth-client
 
@@ -130,7 +130,7 @@ sudo supervisorctl restart application
 ## Stap 8 — Verifiëren
 
 Open het domein in de browser. Je wordt doorgestuurd naar Google; na inloggen met een
-account uit `GOOGLE_WORKSPACE_DOMAINS` zie je de Branding Extractor. Upload een DOCX en
+account van `GOOGLE_WORKSPACE_DOMAIN` zie je de Branding Extractor. Upload een DOCX en
 het profiel verschijnt.
 
 ---
