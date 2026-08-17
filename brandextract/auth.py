@@ -4,13 +4,16 @@ from mozilla_django_oidc.auth import OIDCAuthenticationBackend
 
 class WorkspaceOIDCBackend(OIDCAuthenticationBackend):
     def verify_claims(self, claims):
-        domain = settings.GOOGLE_WORKSPACE_DOMAIN
+        domains = settings.GOOGLE_WORKSPACE_DOMAINS
+        # hd ontbreekt bij persoonlijke Gmail-accounts.
+        hd = (claims.get('hd') or '').lower()
         email = (claims.get('email') or '').lower()
 
         return (
-            bool(domain)
+            bool(domains)
             and claims.get('email_verified') is True
-            # hd ontbreekt bij persoonlijke Gmail-accounts.
-            and claims.get('hd') == domain
-            and email.endswith('@' + domain.lower())
+            and hd in domains
+            # Het adres moet horen bij de hd uit dezelfde token,
+            # niet bij een willekeurig domein uit de lijst.
+            and email.endswith('@' + hd)
         )

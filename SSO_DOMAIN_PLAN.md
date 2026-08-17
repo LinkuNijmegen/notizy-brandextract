@@ -9,10 +9,10 @@ Workspace-domein; alleen de waarde staat nog open. Nog niet uitgevoerd.
 (`verify_claims` in `brandextract/auth.py` geeft `False` bij een leeg domein). De app is
 dus dicht, niet stuk — er kan alleen nog niemand in.
 
-Besloten: **`notizy.com`**, scenario A. `linku.nl` is vervallen; dat was een losse
-Workspace-organisatie en de enige reden om meerdere domeinen te ondersteunen.
+Besloten: **`notizy.com` + `linku.nl`**, scenario B. De code is uitgevoerd; alleen de
+env-waarden en de Google-console-kant staan nog open.
 
-## Scenario A — één domein (gekozen)
+## Scenario A — één domein (vervallen)
 
 Geen codewijziging. `deploy/supervisor.conf`, `deploy/gunicorn.service` en `DEPLOY.md`
 staan al op `notizy.com`. Resteert:
@@ -28,9 +28,9 @@ Zit het andere domein als **domein-alias** in dezelfde tenant, dan hoeft er ook 
 niets: accounts houden hun primaire adres, en zowel de `hd`- als de `email`-claim blijven
 het primaire domein. Het aliasadres komt nooit in de token voor.
 
-## Scenario B — beide domeinen tegelijk toestaan
+## Scenario B — beide domeinen tegelijk toestaan (uitgevoerd)
 
-Alleen nodig als `notizy.nl` en `notizy.com` echt naast elkaar blijven bestaan als
+Nodig als `notizy.nl` en `notizy.com` echt naast elkaar blijven bestaan als
 aparte accounts (secundair domein of aparte tenant). Dan meervoud maken.
 
 `config/settings.py`:

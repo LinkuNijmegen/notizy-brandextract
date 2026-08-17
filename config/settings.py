@@ -142,8 +142,12 @@ REST_FRAMEWORK = {
 
 AUTHENTICATION_BACKENDS = ['brandextract.auth.WorkspaceOIDCBackend']
 
-# Leeg domein weigert elke login — veilige kant om op te falen.
-GOOGLE_WORKSPACE_DOMAIN = os.environ.get('GOOGLE_WORKSPACE_DOMAIN', '')
+# Lege lijst weigert elke login — veilige kant om op te falen.
+GOOGLE_WORKSPACE_DOMAINS = {
+    d.strip().lower()
+    for d in os.environ.get('GOOGLE_WORKSPACE_DOMAINS', '').split(',')
+    if d.strip()
+}
 
 OIDC_RP_CLIENT_ID = os.environ.get('GOOGLE_OIDC_CLIENT_ID', '')
 OIDC_RP_CLIENT_SECRET = os.environ.get('GOOGLE_OIDC_CLIENT_SECRET', '')
@@ -157,7 +161,10 @@ OIDC_RP_SIGN_ALGO = 'RS256'
 OIDC_RP_SCOPES = 'openid email profile'
 
 # Alleen een hint voor Google's accountkiezer; de echte check staat in verify_claims.
-OIDC_AUTH_REQUEST_EXTRA_PARAMS = {'hd': GOOGLE_WORKSPACE_DOMAIN}
+# hd accepteert één waarde; '*' beperkt de kiezer tot Workspace-accounts.
+OIDC_AUTH_REQUEST_EXTRA_PARAMS = {
+    'hd': next(iter(GOOGLE_WORKSPACE_DOMAINS)) if len(GOOGLE_WORKSPACE_DOMAINS) == 1 else '*'
+}
 
 OIDC_CREATE_USER = True
 

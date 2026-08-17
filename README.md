@@ -21,7 +21,7 @@ work, but the app is behind Google Workspace SSO, so a `.env` with Google creden
 is required — there is no password login to fall back on:
 
 ```bash
-cp .env.example .env   # fill in GOOGLE_OIDC_CLIENT_ID/SECRET and GOOGLE_WORKSPACE_DOMAIN
+cp .env.example .env   # fill in GOOGLE_OIDC_CLIENT_ID/SECRET and GOOGLE_WORKSPACE_DOMAINS
 .venv/bin/python manage.py migrate
 ```
 
